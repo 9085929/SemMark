@@ -219,3 +219,4 @@ qwen3embedding-train-output/
 dataset/
 script/
 encoder_finetuned.pt
+README.md
