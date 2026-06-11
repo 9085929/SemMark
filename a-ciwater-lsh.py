@@ -1,4 +1,3 @@
-import torch
 from datasets import load_from_disk
 from dataclasses import dataclass
 from matplotlib import pyplot as plt
@@ -12,9 +11,11 @@ from transformers import get_linear_schedule_with_warmup
 from contrastive_trainer import ParaphraseDataset, SupConModel, SupConLoss
 from embedder.openai_embedder import OpenaiEmbedder
 from logger_config import setup_logger
-from sampling_lsh_utils import get_mask_from_seed
+#from sampling_lsh_utils import get_mask_from_seed
 from sbert_lsh_model import SBERTLSHModel, OpenAiLSHModel
-
+from transformers import AutoTokenizer
+from torch.cuda.amp import autocast, GradScaler
+import torch.nn.functional as F
 LINE_COLOR = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
 LINE_STYLE = ['-', '--', '-.', ':', '', '-', '-', ]
 LINE_MARKER = ['o', 's', 'v', 'p', 'd', 'h', 'x', 'P', 'D', 'H', 'X', '^', '<', '>', '*']
@@ -64,7 +65,7 @@ def draw_boxes(
 def look():
     embedder = None
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    sp_dim: int = 3  # Number of partitions in the embedding space. Default is 8.
+    sp_dim: int = 8  # Number of partitions in the embedding space. Default is 8.
     lmbd: float = 0.25  # Ratio of valid sentences.
 
     lsh_model = SBERTLSHModel(
@@ -134,7 +135,7 @@ def main_v1():
     # "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-8B"
     # "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-4B"
     # "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-0.6B"
-    embedder_path = "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-0.6B"
+    embedder_path = "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-8B"
     logger.info(f"Loading embedder from {embedder_path}")
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     lsh_model = SBERTLSHModel(
@@ -183,67 +184,116 @@ def main_v1():
     )
     logger.info(f"Save results to {tag}.png")
 
-
 def train(cfg):
     dataset = ParaphraseDataset(cfg.train_path, cfg)
-    loader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
+    # 🔥 这里的 batch_size 请在 Config 里大胆开到 64 或 128！
+    loader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
 
-    model = SupConModel(cfg).to(cfg.device)
-    optimizer = AdamW(model.parameters(), lr=cfg.lr)
-    loss_fn = SupConLoss(temperature=cfg.temperature)
+    model = SupConModel(cfg)
+    model = model.to(cfg.device)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    # 注意：因为用了 LoRA，这里只把 require_grad=True 的参数传给优化器
+    optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg.lr)
+    scaler = GradScaler() # 混合精度神器
 
     total_steps = len(loader) * cfg.epochs
     scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(0.1 * total_steps),
-        num_training_steps=total_steps
+        optimizer, num_warmup_steps=int(0.1 * total_steps), num_training_steps=total_steps
     )
 
     for epoch in range(cfg.epochs):
         model.train()
         losses = []
 
-        for batch in tqdm(loader, desc=f"Epoch {epoch + 1}/{cfg.epochs}"):
-            anchor_texts, pos_texts, neg_texts = batch
-            texts = []
-            labels = []
+        for step, batch in enumerate(tqdm(loader, desc=f"Epoch {epoch + 1}/{cfg.epochs}")):
+            anchor_texts, pos_texts = batch
+            
+            # 🔥 魔法拼接：[a1...an, a1_copy...an_copy, p1...pn]
+            # 这样 anchor 会进模型两次，靠内部的 Dropout 自然产生差异（SimCSE）
+            texts = list(anchor_texts) + list(anchor_texts) + list(pos_texts)
+            bsz = len(anchor_texts)
 
-            for a, p, n in zip(anchor_texts, pos_texts, neg_texts):
-                texts.append(a)
-                labels.append(0)
-                texts.append(p)
-                labels.append(0)
-                texts.append(n)
-                labels.append(1)
-
-            labels = torch.tensor(labels, dtype=torch.long).to(cfg.device)
-
-            features = model(texts)  # [3B, 768]
-            loss = loss_fn(features, labels)
-
+            enc = tokenizer(texts, return_tensors="pt", padding=True, truncation=True, max_length=cfg.max_len).to(cfg.device)
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
 
-            losses.append(loss.item())
+            with autocast():
+                # 跑一次前向传播，拿到所有 Embedding
+                features = model(input_ids=enc['input_ids'], attention_mask=enc['attention_mask'])
+                
+                # 优雅切割
+                z_a1 = features[:bsz]          # Anchor 第一次
+                z_a2 = features[bsz: 2*bsz]    # Anchor 第二次 (Dropout差异)
+                z_p  = features[2*bsz:]        # Paraphrase 正样本
+                z_a1 = F.normalize(z_a1, p=2, dim=1)
+                z_a2 = F.normalize(z_a2, p=2, dim=1)
+                z_p  = F.normalize(z_p, p=2, dim=1)
+                # 标准 InfoNCE 的目标标签对角线：0, 1, 2... bsz-1
+                labels = torch.arange(bsz, device=cfg.device)
 
-        print(f"Epoch {epoch + 1}: loss={sum(losses) / len(losses):.4f}")
+                simcse_logits = torch.matmul(z_a1, z_a2.T) / cfg.temperature
+                loss_simcse = F.cross_entropy(simcse_logits, labels)
 
-    torch.save(model.encoder.state_dict(), "encoder_finetuned.pt")
-    print("Saved encoder_finetuned.pt")
+                # 💡 Loss B：SupCon 洗稿主线任务
+                supcon_logits = torch.matmul(z_a1, z_p.T) / cfg.temperature
+                loss_supcon = F.cross_entropy(supcon_logits, labels)
+
+                # 🔥 你的封神改动：打破五五开，确立主从地位！
+                # SupCon 是 LSH 鲁棒性的核心，SimCSE 是防止空间坍缩的底线
+                loss = 0.7 * loss_supcon + 0.3 * loss_simcse
+                
+                # 👇 新增：1. 将 Loss 除以累加步数，平摊梯度
+                loss = loss / cfg.grad_accum_steps
+
+            # 👇 2. 正常反向传播（每次都累加梯度，但不马上更新权重）
+            scaler.scale(loss).backward()
+
+            # 👇 新增：3. 只有达到累加步数（或者是最后一个 batch）才执行权重更新
+            if (step + 1) % cfg.grad_accum_steps == 0 or (step + 1) == len(loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()  # 🚨 必须在这里：更新完权重后才清空梯度！
+                scheduler.step()
+
+            # 👇 4. 日志和监控部分
+            if len(losses) % 50 == 0:
+                with torch.no_grad():
+                    # 监控查看两组相似度
+                    sim_self = torch.cosine_similarity(z_a1[0].unsqueeze(0), z_a2[0].unsqueeze(0)).item()
+                    sim_para = torch.cosine_similarity(z_a1[0].unsqueeze(0), z_p[0].unsqueeze(0)).item()
+                    sim_neg  = torch.cosine_similarity(z_a1[0].unsqueeze(0), z_p[1].unsqueeze(0)).item()
+                    
+                    # 💡 注意：为了让你在日志里看到“真实”的 Loss 大小，这里把它乘回去了
+                    real_loss = loss.item() * cfg.grad_accum_steps
+                    print(f"\n[质检] 总Loss: {real_loss:.4f} (SimCSE: {loss_simcse.item():.2f}, Para: {loss_supcon.item():.2f})")
+                    print(f"[监控] 自身Dropout相似度: {sim_self:.4f}")
+                    print(f"[监控] 洗稿正样本相似度: {sim_para:.4f}")
+                    print(f"[监控] Batch内负样本相似度: {sim_neg:.4f}\n")
+
+            # 💡 同样，记录到列表里计算平均值的也是真实的 loss
+            losses.append(loss.item() * cfg.grad_accum_steps)
+
+        print(f"Epoch {epoch + 1}: avg_loss={sum(losses) / len(losses):.4f}")
+
+    # 保存 LoRA 权重
+    model.encoder.save_pretrained("qwen_lsh8B_lora_rewnews")
+    print("Saved LoRA weights to qwen_lsh8B_lora_rewnews/")
 
 
 @dataclass
 class Config:
-    train_path: str = "data.json"
-    model_name: str = "/home/haojifei/dev_resource/huggingface/models/FacebookAI/roberta-base"
+    train_path: str = "dataset/benchmark_datasets/realnews_10k-8000-pegasus-merged"
+    model_name: str = "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-8B"
     lr: float = 2e-5
     epochs: int = 10
-    batch_size: int = 16
+    batch_size: int = 8 
+    grad_accum_steps: int = 8  # 8 * 8 = 等效 64 的大 batch
     max_len: int = 128
-    temperature: float = 0.07
-    device: str = "cpu"  # "cuda" if torch.cuda.is_available() else "cpu"
+    temperature: float = 0.05
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 if __name__ == '__main__':

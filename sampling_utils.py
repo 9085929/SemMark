@@ -5,7 +5,7 @@ from nltk.tokenize import sent_tokenize
 from string import punctuation
 from itertools import groupby
 
-MAX_TRIALS = 10
+MAX_TRIALS = 20
 if torch.cuda.is_available():
     rng = torch.Generator("cuda")
 else:
@@ -37,7 +37,8 @@ class SentenceEndCriteria(StoppingCriteria):
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
         assert input_ids.size(0) == 1
         text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-        return len(sent_tokenize(text)) > self.current_num_sentences + 1
+    # 只要句子数量增加（开始生成新句子的第一个词），立刻截断
+        return len(sent_tokenize(text)) > self.current_num_sentences
 
 
 def discard_final_token_in_outputs(outputs):

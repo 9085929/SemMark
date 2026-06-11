@@ -6,18 +6,38 @@
 # original github link: https://github.com/cloudygoose/blindspot_nlg
 import argparse
 import os
-from util import load_file_by_line, path_wo_ext, break_text, chunks
+# from util import load_file_by_line, path_wo_ext, break_text, chunks
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForMaskedLM
+import transformers.utils.import_utils
+import transformers.modeling_utils
+transformers.utils.import_utils.check_torch_load_is_safe = lambda: None
+transformers.modeling_utils.check_torch_load_is_safe = lambda: None
 import numpy as np
+import natsort
 import math
 from torch.nn.functional import log_softmax
 from datasets import load_from_disk
 # from bart_score import BARTScorerS
 
 device = torch.cuda.current_device() if torch.cuda.is_available() else -1
+def load_file_by_line(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        return [line.strip() for line in f.readlines()]
 
+def path_wo_ext(path):
+    import os
+    return os.path.splitext(path)[0]
+
+def break_text(texts):
+    # 简单的分词处理，用于计算 n-gram 重复率
+    return [text.lower().split() for text in texts]
+
+def chunks(lst, n):
+    # 将列表或 tensor 按 batch_size 切块
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 def text_entropy(sen_lis, k):
     # sen_lis is like [['i','am','you','</s>'] ...]
     # assume it is lowered case, and clean
@@ -90,8 +110,19 @@ def eval_mlm_perplexity(model, tokenizer, texts, batch_size=1, generation_file=N
     sent_avg_ppl = ppls.mean().item()
 
     if generation_file is not None:
+        # 💡 完美的绝对路径解决方案
+        import os
+        # 尝试从全局或者外层寻找 save_dir，如果不存在则使用当前常规逻辑
+        try:
+            npy_save_path = os.path.join(save_dir, f"{name_suffix}_all_ppls.npy")
+        except NameError:
+            npy_save_dir = generation_file if os.path.isdir(generation_file) else os.path.dirname(generation_file) if os.path.dirname(generation_file) else '.'
+            npy_save_path = os.path.join(npy_save_dir, f"{name_suffix}_all_ppls.npy")
+            
+        np.save(npy_save_path, ppls.numpy())
+        print(f"📦 已经将全部 {len(ppls)} 条数据的原始 PPL 成功导出至: {npy_save_path}")
+
         k = min(K, len(texts))
-        # topk_ppls, topk_idx = (ppls * lengths).topk(k)
         topk_ppls, topk_idx = ppls.topk(k)
         ppl_suffix = f'_{name_suffix}.ppl'
         with open(f'{path_wo_ext(generation_file)}{ppl_suffix}', 'w') as f:
@@ -237,13 +268,28 @@ if __name__ == '__main__':
         print(f'Already have the same filename {csv_save_path}!! stopping...')
         raise AssertionError
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    # 增加 trust_remote_code=True，并修复 Qwen 可能缺失 pad_token 的问题
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
     if args.masked_language_model:
-        model = AutoModelForMaskedLM.from_pretrained(args.model).to(device)
+        model = AutoModelForMaskedLM.from_pretrained(
+            args.model, 
+            trust_remote_code=True, 
+            device_map="auto", 
+            torch_dtype="auto"
+        )
     else:
         pad_id = tokenizer.encode(tokenizer.eos_token)[0]
         model = AutoModelForCausalLM.from_pretrained(
-            args.model, return_dict=True, pad_token_id=pad_id).to(device)
+            args.model, 
+            return_dict=True, 
+            pad_token_id=pad_id,
+            trust_remote_code=True,
+            device_map="auto",    # 关键：让 accelerate 自动把模型平摊到两张 3090Ti 上
+            torch_dtype="auto"    # 关键：自动使用 bfloat16 或 float16，节省显存
+        )
     model.eval()
 
     results = 'name\tppl\trep\n'
@@ -258,7 +304,22 @@ if __name__ == '__main__':
         print(f'file basename: {basename}')
         if hf_dataset_mode:
             ds = load_from_disk(gen_path)
-            gen = ds['text']
+            
+            # 严格判断是否是多子集的 DatasetDict (检查内部是否有真实的 train/test/valid 等 split 键)
+            # 区分：Dataset也有keys方法(返回列名)，所以通过判断映射对象的属性或特征来区分
+            from datasets import DatasetDict
+            if isinstance(ds, DatasetDict): 
+                gen = []
+                for split in ds.keys():
+                    text_data = ds[split]['text']
+                    if len(text_data) > 0 and isinstance(text_data[0], list):
+                        text_data = [" ".join(t) for t in text_data]
+                    gen.extend(text_data)
+            else:
+                # 单个 Dataset 格式，直接提取 'text' 字段
+                gen = ds['text']
+                if len(gen) > 0 and isinstance(gen[0], list):
+                    gen = [" ".join(t) for t in gen]
         else:
             gen = load_file_by_line(gen_path)
         if args.lim is not None:

@@ -141,7 +141,87 @@ def gen_prompt(sent, context):
 def gen_bigram_prompt(sent, context, num_beams):
     prompt = f'''Previous context: {context} \n Paraphrase in {num_beams} different ways and return a numbered list : {sent}'''
     return prompt
+def gen_prompt_synonym(sent, context, num_paraphrases=5):
+    # prompt = (
+    #     f"Previous context: {context}\n"
+    #     f"Current sentence to paraphrase: {sent}\n"
+    #     f"Please provide {num_paraphrases} diverse paraphrased versions of this sentence in a numbered list.\n"
+    #     f"Requirements for Lexical Substitution Attack:\n"
+    #     f"1. Core Semantics: Strictly preserve the original meaning, facts, and entities. Do NOT alter sentiment.\n"
+    #     f"2. Lexical Diversity: Replace as many content words (verbs, adjectives, nouns) as naturally possible. Aim for substantial lexical variation.\n"
+    #     f"3. Structural Consistency: Keep the overall sentence structure (e.g., voice, clause order) largely unchanged.\n"
+    #     f"4. Local Grammatical Adjustment: Adjust grammar, prepositions, or articles as needed to ensure fluency.\n"
+    #     f"5. Output Diversity: Each paraphrase must use a different set of synonyms and avoid repetition.\n"
+    # )
+    prompt = (
+    f"Previous context: {context}\n"
+    f"Current sentence to paraphrase: {sent}\n"
+    f"Please provide {num_paraphrases} rewritten versions in a numbered list.\n"
+    f"Requirements for Strict Synonym Substitution Attack:\n"
+    f"1. Replace content words (verbs, adjectives, adverbs, and general nouns) with contextually appropriate synonyms whenever possible.\n"
+    f"2. Perform substitutions primarily through direct lexical replacement rather than phrase rewriting, while preserving fluency.\n"
+    f"3. Do NOT modify named entities, technical terms, numbers, or key subject nouns.\n"
+    f"4. Preserve the original semantic meaning, factual content, sentiment, and logical flow. Do not add or remove information.\n"
+    f"5. Keep sentence structure, clause order, and voice unchanged except for minimal grammatical adjustments required for natural language.\n"
+)
+    return prompt
+def gen_prompt_pure_bt_step1(sent):
+    prompt = (
+        f"Translate the following sentence into French. Preserve the meaning exactly. Output ONLY the French translation.\n"
+        f"Sentence: {sent}"
+    )
+    return prompt
 
+def gen_prompt_pure_bt_step2(french_sent):
+    prompt = (
+        f"Translate the following French sentence back into English. The result should be fluent and semantically equivalent to the original. Output ONLY the English translation.\n"
+        f"Sentence: {french_sent}"
+    )
+    return prompt
+def gen_prompt_enhanced_paraphrase(sent, context, num_paraphrases=4):
+    prompt = (
+        f"Previous context: {context}\n"
+        f"Current sentence: {sent}\n"
+        f"Please perform a standard translation-backtranslation process using French as the intermediate language.\n"
+        f"Instructions:\n"
+        f"1. Translate the current sentence into French.\n"
+        f"2. Translate that French version back into English.\n"
+        f"3. Ensure the final English sentence preserves the original meaning, facts, and entities.\n"
+        f"4. Allow natural changes in wording and sentence structure resulting from the translation process.\n"
+        f"5. Output ONLY {num_paraphrases} final back-translated English versions in a numbered list. Do NOT output the intermediate French text.\n"
+    )
+    return prompt
+def gen_prompt_paper_regular(sent, context):
+    """
+    SimMark 论文严格意义上的 Regular Attack Baseline
+    没有任何输出数量和格式约束，只测模型最自然的润色改写。
+    """
+    prompt = (
+        f"Previous context: {context}\n"
+        f"Current sentence to paraphrase: {sent}"
+    )
+    return prompt
+
+def query_openai(client, prompt, temperature=1.0): # 默认 temperature
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini", 
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=temperature, # 使用传入的温度
+            max_tokens=256,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"OpenAI API 调用出错: {e}")
+        return "" # 出错时返回空字符串，避免程序直接崩溃
 
 # @backoff.on_exception(backoff.expo, openai.RateLimitError)
 # def query_openai(client, prompt):

@@ -1,160 +1,117 @@
 import sampling_utils
 import torch
 import torch.nn.functional as F
-from transformers import GenerationConfig, StoppingCriteriaList
+from transformers import GenerationConfig, StoppingCriteriaList, LogitsProcessor, LogitsProcessorList
 from sbert_lsh_model import SBERTLSHModel
 from transformers.modeling_utils import PreTrainedModel
 from transformers.tokenization_utils import PreTrainedTokenizer
 import numpy as np
-from sampling_utils import SentenceEndCriteria, device, gen_sent
-
-# rng = torch.Generator()
-device = "cuda" if torch.cuda.is_available() else "cpu"
-rng = torch.Generator(device)
-MAX_TRIALS = sampling_utils.MAX_TRIALS
-hash_key = sampling_utils.hash_key
+from sampling_utils import SentenceEndCriteria, device
+import hashlib
+from nltk.tokenize import sent_tokenize 
 
 
-def cosine_distance_matrix(x, y):
-    return F.cosine_similarity(
-        x.view(x.size(0), 1, x.size(1))
-        .expand(x.size(0), y.size(0), x.size(1))
-        .contiguous()
-        .view(-1, x.size(1)),
-        y.expand(x.size(0), y.size(0), y.size(1)).flatten(end_dim=1),
-    ).view(x.size(0), y.size(0))
+class SemanticSeedLogitsProcessor(LogitsProcessor):
+    # 👇 1. 初始化中加入 sweet_threshold 参数
+    def __init__(self, vocab_size: int, gamma: float, delta: float, seed: int, sweet_threshold: float = 0.6):
+        self.vocab_size = vocab_size
+        self.gamma = gamma
+        self.delta = delta
+        self.seed = seed
+        self.sweet_threshold = sweet_threshold
 
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
+        # 👇 2. 计算当前 Logits 分布的香农熵
+        # 先将 Logits 转为概率分布
+        probs = torch.softmax(scores, dim=-1)
+        # 计算熵：H = -sum(p * log(p))，加 1e-10 是为了防止对数里出现 0 导致 NaN
+        entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
+        
+        # 3. 决定绿名单 (原有逻辑)
+        rng = torch.Generator(device='cpu')
+        rng.manual_seed(self.seed)
 
-def get_mask_from_seed(lsh_dim: int, accept_rate: float, seed: int):
-    n_bins = 2 ** lsh_dim
-    n_accept = int(n_bins * accept_rate)
-    # rng_seed = hash_key * seed
-    rng_seed = seed
-    rng.manual_seed(rng_seed)
-    vocab_permutation = torch.randperm(n_bins, device='cuda', generator=rng)
-    greenlist_ids = vocab_permutation[:n_accept]
-    # print(f"n_bins:{n_bins}, n_accept:{n_accept}, rng_seed:{rng_seed}")
-    return greenlist_ids.to(device)
+        vocab_permutation = torch.randperm(self.vocab_size, generator=rng)
+        greenlist_size = int(self.vocab_size * self.gamma)
+        greenlist_ids = vocab_permutation[:greenlist_size].to(scores.device)
 
+        # 👇 4. SWEET 门控过滤：仅对熵大于等于阈值的样本施加偏置
+        for b in range(scores.size(0)):  # 遍历 batch 维度（通常生成时 batch size 为 1）
+            if entropy[b] >= self.sweet_threshold:
+                scores[b, greenlist_ids] += self.delta
+                
+        return scores
 
-def reject_close_generation(lsh_model, sents, margin, cutoff=None):
-    embeds = lsh_model.get_embeddings(sents)
-    embeds = torch.tensor(embeds, device='cuda')
-    normals = torch.tensor(lsh_model.hasher.normals, device='cuda')
-    if cutoff != None:
-        normals = normals[:cutoff]
-
-    # sims[i, j] is the cosine similarity between the ith generation and the jth normal vec
-    sims = cosine_distance_matrix(embeds, normals)
-    sims_abs = torch.abs(sims)
-    # max_sim is the highest cosine similarity of each generation with any normal vec
-    min_sims = sims_abs.min(dim=1).values
-    select = []
-    for i in range(len(min_sims)):
-        # print(max_sims[i])
-        min_sim = min_sims[i].item()
-        if (abs(min_sim) >= margin):
-            # print(min_sim)
-            select.append(i)
-    sents = np.array(sents)
-    sents = sents[select]
-    return list(sents), select
-
+def get_seed_from_lsh(lsh_sig):
+    sig_str = str(lsh_sig)
+    return int(hashlib.md5(sig_str.encode('utf-8')).hexdigest(), 16) % (2**31 - 1)
 
 def lsh_reject_completion(
         prompt: str,
-        model: PreTrainedModel,  # gen args
-        tokenizer: PreTrainedTokenizer,  # gen args
-        gen_config: GenerationConfig,  # gen args
-        lsh_model: SBERTLSHModel,  # LSH args
-        lsh_dim: int,  # LSH args
-        # watermark args. lambda is probability of accepting (i.e., green list size)
-        lmbd=1.0,
+        model: PreTrainedModel,  
+        tokenizer: PreTrainedTokenizer, 
+        gen_config: GenerationConfig,  
+        lsh_model: SBERTLSHModel,  
+        lsh_dim: int,  
+        lmbd=0.5,
         device='cuda',
-        margin=0.002,
+        margin=2.0, 
+        sweet_threshold=0.6, # <--- 新增参数
         **kwargs
 ):
-    # print(f"prompt: {prompt}")
-    stats = {}
+    delta = margin if margin > 0 else 2.0
     sent_end_criteria = SentenceEndCriteria(tokenizer)
-    lsh_seed = lsh_model.get_hash([prompt])[0]
-    accept_mask = get_mask_from_seed(lsh_dim, lmbd, lsh_seed)
 
-    text = prompt
-    new_text = prompt
     text_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
-    prompt_length = len(text_ids[0])
-    sent_end_criteria.update(new_text)
+    prompt_length = text_ids.size(1)
+    full_text = prompt 
 
-    total_trials = 0
-    success_trials = 0  # also include trials that maxed out MAX_TRIALS
-    current_trials = 0
-    maxedout_trials = 0
-    debug_text_segments = [(prompt, text_ids.size(1), lsh_seed)]
     while True:
-        stopping_criteria = StoppingCriteriaList([sent_end_criteria])
-        if "opt" in model.config._name_or_path:
-            new_text, new_text_ids = gen_sent(
-                model=model,
-                tokenizer=tokenizer,
-                text_ids=text_ids,
-                gen_config=gen_config,
-                stopping_criteria=stopping_criteria
-            )
-        else:
-            # todo: 原来是 raise NotImplementedError("model type are not support now!")
-            new_text, new_text_ids = gen_sent(
-                model=model,
-                tokenizer=tokenizer,
-                text_ids=text_ids,
-                gen_config=gen_config,
-                stopping_criteria=stopping_criteria
-            )
 
-        if new_text == '':
-            print(
-                'WARNING: stopped generation because generated nothing (after discarding last generated token)',
-                flush=True
-            )
+        current_sents = sent_tokenize(full_text)
+        
+        if len(current_sents) == 0:
+            context_sentence = ""
+        elif len(current_sents) == 1:
+            context_sentence = current_sents[0]
+        else:
+            if full_text.strip()[-1] in ['.', '!', '?', '"', "'", '”', '’']:
+                context_sentence = current_sents[-1]
+            else:
+                context_sentence = current_sents[-2]
+
+        lsh_sig = lsh_model.get_hash([context_sentence])[0]
+        current_seed = get_seed_from_lsh(lsh_sig)
+
+        # 👇 6. 在实例化 Processor 时把 sweet_threshold 传进去
+        processor = SemanticSeedLogitsProcessor(len(tokenizer), lmbd, delta, current_seed, sweet_threshold)
+        processors = LogitsProcessorList([processor])
+
+        stopping_criteria = StoppingCriteriaList([sent_end_criteria])
+        sent_end_criteria.update(full_text)
+
+        new_text_ids = model.generate(
+            text_ids,
+            max_new_tokens=60, 
+            min_new_tokens=3,
+            do_sample=True,
+            temperature=gen_config.temperature,
+            repetition_penalty=gen_config.repetition_penalty,
+            logits_processor=processors, 
+            stopping_criteria=stopping_criteria,
+            pad_token_id=tokenizer.eos_token_id
+        )
+
+        new_tokens = new_text_ids[0][text_ids.size(1):]
+        new_sentence = tokenizer.decode(new_tokens, skip_special_tokens=True)
+
+        if new_sentence.strip() == '':
             break
 
-        total_trials += 1
-        current_trials += 1
+        full_text += new_sentence
+        text_ids = new_text_ids
 
-        accepted_text, _ = reject_close_generation(
-            lsh_model, [new_text], margin=margin,  # cutoff=None
-        )
-        if len(accepted_text) == 0 and current_trials < MAX_TRIALS:
-            continue
+        if (text_ids.size(1) - prompt_length) >= gen_config.max_new_tokens - 1:
+            break
 
-        lsh_seed_candidate = lsh_model.get_hash([new_text])[0]
-        if lsh_seed_candidate not in accept_mask:
-            continue
-
-        if (lsh_seed_candidate in accept_mask) or current_trials >= MAX_TRIALS:
-            if current_trials >= MAX_TRIALS:
-                print(
-                    f'WARNING: desired semantic signature can\'t be sampled after max_trials {MAX_TRIALS}',
-                    flush=True
-                )
-                print(f'CONTEXT: {text}', flush=True)
-                print(
-                    f'NOTE: use regular (non-filtered-by-sig) continuation: {new_text}',
-                    flush=True
-                )
-                maxedout_trials += 1
-
-            debug_text_segments.append(
-                (new_text, new_text_ids.size(1) - text_ids.size(1), lsh_seed_candidate)
-            )
-            current_trials = 0
-            success_trials += 1
-            # passed, proceed to the next sentence
-            lsh_seed = lsh_seed_candidate
-            accept_mask = get_mask_from_seed(lsh_dim, lmbd, lsh_seed)
-            text += new_text
-            text_ids = new_text_ids
-            sent_end_criteria.update(text)
-            if (len(text_ids[0]) - prompt_length) >= gen_config.max_new_tokens - 1:
-                break
-    return text
+    return full_text
