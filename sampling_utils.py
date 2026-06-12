@@ -5,7 +5,7 @@ from nltk.tokenize import sent_tokenize
 from string import punctuation
 from itertools import groupby
 
-MAX_TRIALS = 20
+MAX_TRIALS = 50
 if torch.cuda.is_available():
     rng = torch.Generator("cuda")
 else:
@@ -16,16 +16,6 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 class SentenceEndCriteria(StoppingCriteria):
-    """
-    ONLY WORK WITH BATCH SIZE 1
-
-    Stop generation whenever the generated string is **more than one** sentence (i.e. one full sentence + one extra token). this is determined by nltk sent_tokenize.
-    Only stop if ALL sentences in the batch is at least two sentences
-
-    Args:
-        tokenizer (PreTrainedTokenizer):
-            The exact tokenizer used for generation. MUST BE THE SAME!
-    """
 
     def __init__(self, tokenizer: PreTrainedTokenizer):
         self.tokenizer = tokenizer
@@ -37,12 +27,10 @@ class SentenceEndCriteria(StoppingCriteria):
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
         assert input_ids.size(0) == 1
         text = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
-    # 只要句子数量增加（开始生成新句子的第一个词），立刻截断
         return len(sent_tokenize(text)) > self.current_num_sentences
 
 
 def discard_final_token_in_outputs(outputs):
-    # (bz, seqlen)
     return outputs[:, :-1]
 
 
@@ -60,7 +48,6 @@ def extract_prompt_from_text(text, len_prompt):
                 prompts.append(new_text[:idx + 1])
     if len(prompts) == 0:
         prompts.append(new_text + ".")
-    # select first (sub)sentence, deliminated by any of PUNCTS
     prompt = list(sorted(prompts, key=lambda x: len(x)))[0]
     return prompt
 
@@ -77,7 +64,6 @@ def gen_sent(model, tokenizer, text_ids, gen_config, stopping_criteria):
     new_text = tokenizer.decode(
         new_text_ids[0, text_ids.size(1):], skip_special_tokens=True
     )
-    # print(new_text, new_text_ids)
     return new_text, new_text_ids
 
 
