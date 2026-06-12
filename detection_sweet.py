@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument('--sp_dim', type=int, default=3,
                         help='dimension of the subspaces. default 3 for sstamp and 8 for ksstamp')
     parser.add_argument('--max_new_tokens', type=int, default=205)
-    parser.add_argument('--lmbd', type=float, default=0.25, help='ratio of valid sentences')
+    parser.add_argument('--lmbd', type=float, default=0.5, help='ratio of valid sentences')
     parser.add_argument('--sweet_threshold', type=float, default=0.6, help='Entropy threshold for SWEET')
 
     args = parser.parse_args()
