@@ -12,7 +12,6 @@ from nltk.tokenize import sent_tokenize
 
 
 class SemanticSeedLogitsProcessor(LogitsProcessor):
-    # 👇 1. 初始化中加入 sweet_threshold 参数
     def __init__(self, vocab_size: int, gamma: float, delta: float, seed: int, sweet_threshold: float = 0.6):
         self.vocab_size = vocab_size
         self.gamma = gamma
@@ -21,22 +20,15 @@ class SemanticSeedLogitsProcessor(LogitsProcessor):
         self.sweet_threshold = sweet_threshold
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor) -> torch.FloatTensor:
-        # 👇 2. 计算当前 Logits 分布的香农熵
-        # 先将 Logits 转为概率分布
         probs = torch.softmax(scores, dim=-1)
-        # 计算熵：H = -sum(p * log(p))，加 1e-10 是为了防止对数里出现 0 导致 NaN
         entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)
-        
-        # 3. 决定绿名单 (原有逻辑)
         rng = torch.Generator(device='cpu')
         rng.manual_seed(self.seed)
 
         vocab_permutation = torch.randperm(self.vocab_size, generator=rng)
         greenlist_size = int(self.vocab_size * self.gamma)
         greenlist_ids = vocab_permutation[:greenlist_size].to(scores.device)
-
-        # 👇 4. SWEET 门控过滤：仅对熵大于等于阈值的样本施加偏置
-        for b in range(scores.size(0)):  # 遍历 batch 维度（通常生成时 batch size 为 1）
+        for b in range(scores.size(0)):  
             if entropy[b] >= self.sweet_threshold:
                 scores[b, greenlist_ids] += self.delta
                 
@@ -56,7 +48,7 @@ def lsh_reject_completion(
         lmbd=0.5,
         device='cuda',
         margin=2.0, 
-        sweet_threshold=0.6, # <--- 新增参数
+        sweet_threshold=0.6, 
         **kwargs
 ):
     delta = margin if margin > 0 else 2.0
@@ -83,7 +75,6 @@ def lsh_reject_completion(
         lsh_sig = lsh_model.get_hash([context_sentence])[0]
         current_seed = get_seed_from_lsh(lsh_sig)
 
-        # 👇 6. 在实例化 Processor 时把 sweet_threshold 传进去
         processor = SemanticSeedLogitsProcessor(len(tokenizer), lmbd, delta, current_seed, sweet_threshold)
         processors = LogitsProcessorList([processor])
 
