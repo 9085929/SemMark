@@ -129,7 +129,7 @@ python paraphrase_gen.py \
   python paraphrase_gen.py \
   --data_path path/to/watermarked_dataset \
   --paraphraser openai
-
+```
 ---
 
 ## Step 5: Watermark Detection
