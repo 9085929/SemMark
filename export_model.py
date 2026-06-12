@@ -8,7 +8,7 @@ import shutil
 base_model_path = "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-8B"
 lora_weights_path = "qwen_lsh8B_lora_rewnews" # 训练脚本里保存 LoRA 的目录
 save_path = "/home/haojifei/dev_projects/nlp_projects/Learn-LSH/my_watermark_embedder8B_finetuned_booksum"
-temp_hf_path = "./temp_merged_hf" # 临时中转目录
+temp_hf_path = "./temp_merged_hf" 
 
 print("1. 加载原生 HF 躯壳并注入 LoRA 权重...")
 base_model = AutoModel.from_pretrained(base_model_path, trust_remote_code=True, device_map="cpu")
@@ -30,7 +30,6 @@ word_embedding_model = models.Transformer(
     tokenizer_args={"trust_remote_code": True}
 )
 
-# 🚨 严格对齐训练时的 Mean Pooling 和 Normalize！
 pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension(), pooling_mode='mean')
 norm_model = models.Normalize() 
 model = SentenceTransformer(modules=[word_embedding_model, pooling_model, norm_model])
@@ -38,7 +37,6 @@ model = SentenceTransformer(modules=[word_embedding_model, pooling_model, norm_m
 print("5. 导出最终模型...")
 model.save(save_path)
 
-# 清理临时中转文件
 if os.path.exists(temp_hf_path):
     shutil.rmtree(temp_hf_path)
 
