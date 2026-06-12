@@ -12,7 +12,6 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from transformers import Trainer
 from transformers.utils.versions import require_version
-# 1. 🚨 修改点：引入 AutoModel 和 AutoTokenizer
 from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warmup
 
 from peft import LoraConfig, get_peft_model, TaskType
@@ -29,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 class SupConLoss(nn.Module):
-    """论文公式6：multi-positive supervised contrastive"""
 
     def __init__(self, temperature=0.07):
         super().__init__()
@@ -63,10 +61,7 @@ class SupConModel(nn.Module):
         self.config = cfg
         encoder = AutoModel.from_pretrained(cfg.model_name, trust_remote_code=True)
         
-        # 🔥 1. 开启梯度检查点：牺牲 20% 计算速度，换取近 50% 显存（为了推高 Batch Size）
         encoder.gradient_checkpointing_enable()
-        
-        # 🔥 2. LoRA 护体：绝对防止灾难性遗忘
         peft_config = LoraConfig(
             task_type=TaskType.FEATURE_EXTRACTION,
             r=8,
@@ -75,7 +70,7 @@ class SupConModel(nn.Module):
             target_modules=["q_proj", "v_proj"]
         )
         self.encoder = get_peft_model(encoder, peft_config)
-        self.encoder.print_trainable_parameters() # 终端会打印出只训练极少参数
+        self.encoder.print_trainable_parameters() 
         
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, trust_remote_code=True)
         if self.tokenizer.pad_token is None:
@@ -146,16 +141,12 @@ class ParaphraseDataset(Dataset):
             anchor = " ".join(anchor)
         positives = [" ".join(p) if isinstance(p, list) else p for p in positives if p]
         
-        # 随机挑一个洗稿版本作为 Positive
         pos = random.choice(positives)
-
-        # 🚨 极其纯净：只返回 a 和 p！没有虚假的负样本！
         return anchor, pos
 
     def __getitem__(self, idx):
         item = self.data[idx]
         
-        # 兼容 HF 数据集格式
         if self.is_hf:
             anchor = item['text']
             # 提取所有可用的洗稿文本
@@ -166,15 +157,12 @@ class ParaphraseDataset(Dataset):
             if isinstance(anchor, list):
                 anchor = " ".join(anchor)
             positives = [" ".join(p) if isinstance(p, list) else p for p in positives if p]
-            
-            # 随机挑一个洗稿版本作为 Positive
-            pos = random.choice([p for p in positives if len(p.strip()) > 0]) # 确保不选到空字符串
+            pos = random.choice([p for p in positives if len(p.strip()) > 0]) 
         else:
             anchor = item["anchor"]
             positives = item["positives"]
             pos = random.choice(positives)
 
-        # 🚨 核心修复：只返回 anchor 和 pos，不要再生成 neg 了！
         return anchor, pos
 
 class ParaphraseContrastiveTrainer(Trainer):
