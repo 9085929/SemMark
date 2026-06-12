@@ -122,17 +122,13 @@ SemMark uses:
 
 ## Step 4: Perform Adversarial Attacks
 
-Generate paraphrased attacked texts:
+Generate paraphrased adversarial texts using GPT-4o-mini:
 
 ```bash
-python paraphrase_gen.py
-```
-
-Supported attacks include:
-
-* Back Translation
-* Paraphrasing
-* Synonym Replacement
+python paraphrase_gen.py \
+  python paraphrase_gen.py \
+  --data_path path/to/watermarked_dataset \
+  --paraphraser openai
 
 ---
 
