@@ -1,12 +1,6 @@
 '''partially adapted from nl-command'''
-# By the courtesy of the authors of 
-# "On the Blind Spots of Model-Based Evaluation Metrics for Text Generation"
-# https://arxiv.org/abs/2212.10020
-#
-# original github link: https://github.com/cloudygoose/blindspot_nlg
 import argparse
 import os
-# from util import load_file_by_line, path_wo_ext, break_text, chunks
 from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModelForMaskedLM
@@ -19,7 +13,6 @@ import natsort
 import math
 from torch.nn.functional import log_softmax
 from datasets import load_from_disk
-# from bart_score import BARTScorerS
 
 device = torch.cuda.current_device() if torch.cuda.is_available() else -1
 def load_file_by_line(path):
@@ -31,16 +24,12 @@ def path_wo_ext(path):
     return os.path.splitext(path)[0]
 
 def break_text(texts):
-    # 简单的分词处理，用于计算 n-gram 重复率
     return [text.lower().split() for text in texts]
 
 def chunks(lst, n):
-    # 将列表或 tensor 按 batch_size 切块
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
 def text_entropy(sen_lis, k):
-    # sen_lis is like [['i','am','you','</s>'] ...]
-    # assume it is lowered case, and clean
     dd, num = {}, 0
     for sen in sen_lis:
         for i in range(0, len(sen) - k + 1):
@@ -81,7 +70,6 @@ def mlm_perplexity(model, tokenizer, text, batch_size):
             b_orig_token_logprobs = token_logprobs[torch.arange(
                 b_idx.size(0)).to(device), b_masked_idxs, b_orig_ids]
             orig_token_logprobs.append(b_orig_token_logprobs)
-        # score for each position (seqlen,)
         orig_token_logprobs = torch.cat(orig_token_logprobs, dim=0)
 
         nll = orig_token_logprobs[1:-1].mean()  # strip eos, bos
@@ -94,25 +82,12 @@ def eval_mlm_perplexity(model, tokenizer, texts, batch_size=1, generation_file=N
     ppls = []
     for i, text in enumerate(tqdm(texts, desc='mlm perplexity')):
         ppl = mlm_perplexity(model, tokenizer, text, batch_size)
-        # try:
-        #     ppl = mlm_perplexity(model, tokenizer, text, batch_size)
-        # except KeyboardInterrupt:
-        #     print('user pressed ctrl+C...')
-        #     __import__('sys').exit()
-        # except:
-        #     print('ppl model error')
-        #     print(f'text=<{text}>')
-        #     print(f'index: {i}')
-        #     continue
-
         ppls.append(ppl)
     ppls = torch.tensor(ppls).float()
     sent_avg_ppl = ppls.mean().item()
 
     if generation_file is not None:
-        # 💡 完美的绝对路径解决方案
         import os
-        # 尝试从全局或者外层寻找 save_dir，如果不存在则使用当前常规逻辑
         try:
             npy_save_path = os.path.join(save_dir, f"{name_suffix}_all_ppls.npy")
         except NameError:
@@ -145,13 +120,10 @@ def eval_perplexity(model, tokenizer, texts, generation_file=None, K=500, name_s
         text = text.replace("Paraphrase:", "")
         text = text.replace("paraphrase:", "")
 
-        # important: gpt2 won't add bos <|endoftext|> when tokenize by default
         prefix = tokenizer.bos_token if 'GPT2Tokenizer' in type(
             tokenizer).__name__ else ''
-        # prefix = ''
         input_ids = tokenizer.encode(
             prefix + text, return_tensors='pt', truncation=True).to(device)
-        # TODO: prepend <|endoftext|> to input_ids
         target_ids = input_ids.clone()
         try:
             outputs = model(input_ids, labels=target_ids)
@@ -173,22 +145,18 @@ def eval_perplexity(model, tokenizer, texts, generation_file=None, K=500, name_s
     lengths = torch.tensor(lengths).float()
     total_length = lengths.sum()
 
-    # token_avg_ppl = torch.exp(nlls.sum() / total_length)
     sent_avg_ppl = ppls.mean().item()
     weighted_avg_ppl = ((ppls * lengths).sum() / total_length).item()
 
     print(f'perplexity from model {name_suffix} out of {len(ppls)}:')
-    # print(f'token_avg_ppl={token_avg_ppl:.4f}')
     print(f'sent_avg_ppl={sent_avg_ppl:.4f}')
     print(f'weighted_avg_ppl={weighted_avg_ppl:.4f}')
 
     if generation_file is not None:
         k = min(K, len(texts))
-        # topk_ppls, topk_idx = (ppls * lengths).topk(k)
         topk_ppls, topk_idx = ppls.topk(k)
         ppl_suffix = f'_{name_suffix}.ppl'
         with open(f'{path_wo_ext(generation_file)}{ppl_suffix}', 'w') as f:
-            # print(f'token_avg_ppl={token_avg_ppl:.4f}', file=f)
             print(f'sent_avg_ppl={sent_avg_ppl:.4f}', file=f)
             print(f'weighted_avg_ppl={weighted_avg_ppl:.4f}', file=f)
             for i in range(len(topk_idx)):
@@ -259,7 +227,6 @@ if __name__ == '__main__':
     args = parse_args()
 
     hf_dataset_mode = os.path.isdir(args.generation[-1])
-    # use directory of last generation file by default
     save_dir = args.generation[-1] if hf_dataset_mode else os.path.dirname(
         args.generation[-1])
 
@@ -268,7 +235,6 @@ if __name__ == '__main__':
         print(f'Already have the same filename {csv_save_path}!! stopping...')
         raise AssertionError
 
-    # 增加 trust_remote_code=True，并修复 Qwen 可能缺失 pad_token 的问题
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -287,8 +253,8 @@ if __name__ == '__main__':
             return_dict=True, 
             pad_token_id=pad_id,
             trust_remote_code=True,
-            device_map="auto",    # 关键：让 accelerate 自动把模型平摊到两张 3090Ti 上
-            torch_dtype="auto"    # 关键：自动使用 bfloat16 或 float16，节省显存
+            device_map="auto",    
+            torch_dtype="auto"   
         )
     model.eval()
 
@@ -304,9 +270,6 @@ if __name__ == '__main__':
         print(f'file basename: {basename}')
         if hf_dataset_mode:
             ds = load_from_disk(gen_path)
-            
-            # 严格判断是否是多子集的 DatasetDict (检查内部是否有真实的 train/test/valid 等 split 键)
-            # 区分：Dataset也有keys方法(返回列名)，所以通过判断映射对象的属性或特征来区分
             from datasets import DatasetDict
             if isinstance(ds, DatasetDict): 
                 gen = []
@@ -316,7 +279,6 @@ if __name__ == '__main__':
                         text_data = [" ".join(t) for t in text_data]
                     gen.extend(text_data)
             else:
-                # 单个 Dataset 格式，直接提取 'text' 字段
                 gen = ds['text']
                 if len(gen) > 0 and isinstance(gen[0], list):
                     gen = [" ".join(t) for t in gen]
