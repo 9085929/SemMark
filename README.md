@@ -133,13 +133,14 @@ python paraphrase_gen.py \
 
 ## Step 5: Watermark Detection
 
-Detect watermark signals:
+Detect watermark signals and evaluate detection performance:
 
 ```bash
-python detection_sweet.py
-```
-
-The detector reconstructs semantic seeds and performs statistical verification on high-entropy tokens.
+CUDA_VISIBLE_DEVICES=0,1 python detection_sweet.py \
+  path/to/attacked_or_watermarked_dataset \
+  --human_text path/to/human_reference_dataset \
+  --detection_mode lsh \
+  --model path/to/Qwen3-8B \
 
 ---
 
