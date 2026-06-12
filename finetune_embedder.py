@@ -1,22 +1,3 @@
-#!/usr/bin/env python
-# coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
-# Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-""" Finetuning multi-lingual models on XNLI (e.g. Bert, DistilBERT, XLM).
-    Adapted from `examples/text-classification/run_glue.py`"""
-
 import logging
 import os
 import random
@@ -50,10 +31,6 @@ from transformers.utils.versions import require_version
 from contrastive_trainer import ParaphraseContrastiveTrainer
 
 torch.autograd.set_detect_anomaly(True)
-
-# Will error if the minimal version of Transformers is not installed. Remove at your own risks.
-# check_min_version("4.28.0.dev0")
-
 require_version(
     "datasets>=1.8.0",
     "To fix: pip install -r examples/pytorch/text-classification/requirements.txt",
@@ -61,16 +38,8 @@ require_version(
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class DataTrainingArguments:
-    """
-    Arguments pertaining to what data we are going to input our model for training and eval.
-
-    Using `HfArgumentParser` we can turn this class
-    into argparse arguments to be able to specify them on
-    the command line.
-    """
 
     dataset_path: str = field(default=None, metadata={"help": "Path to dataset dir"})
     max_seq_length: Optional[int] = field(
@@ -134,10 +103,6 @@ class DataTrainingArguments:
 
 @dataclass
 class ModelArguments:
-    """
-    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
-    """
-
     model_name_or_path: str = field(
         default=None,
         metadata={
@@ -198,9 +163,6 @@ class ModelArguments:
 
 
 def main():
-    # See all possible arguments in src/transformers/training_args.py
-    # or by passing the --help flag to this script.
-    # We now keep distinct sets of args, for a cleaner separation of concerns.
     os.environ["WANDB_DISABLED"] = "true"
     parser = HfArgumentParser(
         (ModelArguments, DataTrainingArguments, TrainingArguments)
@@ -215,7 +177,6 @@ def main():
     )
 
     if training_args.should_log:
-        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
         transformers.utils.logging.set_verbosity_info()
 
     log_level = training_args.get_process_log_level()
@@ -254,9 +215,6 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
 
-    # In distributed training, the load_dataset function guarantees that only one local process can concurrently
-    # download the dataset.
-    # Downloading and loading xnli dataset from the hub.
     if training_args.do_train:
         train_dataset = load_from_disk(os.path.join(data_args.dataset_path, "train"))
         # label_list = train_dataset.features["intent"].names
@@ -267,19 +225,10 @@ def main():
 
     if training_args.do_predict:
         predict_dataset = load_from_disk(os.path.join(data_args.dataset_path, "test"))
-        # label_list = predict_dataset.features["intent"].names
-
-    # # Labels
-    # num_labels = len(label_list)
-
-    # Load pretrained model and tokenizer
-    # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
     config = AutoConfig.from_pretrained(
         model_args.config_name
         if model_args.config_name
         else model_args.model_name_or_path,
-        # num_labels=num_labels,
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
@@ -288,11 +237,7 @@ def main():
         model_args.tokenizer_name
         if model_args.tokenizer_name
         else model_args.model_name_or_path,
-        # do_lower_case=model_args.do_lower_case,
-        # cache_dir=model_args.cache_dir,
-        # use_fast=model_args.use_fast_tokenizer,
         revision=model_args.model_revision,
-        # use_auth_token=True if model_args.use_auth_token else None,
     )
 
     model = AutoModel.from_pretrained(
@@ -305,15 +250,11 @@ def main():
         ignore_mismatched_sizes=model_args.ignore_mismatched_sizes,
     )
 
-    # Preprocessing the datasets
-    # Padding strategy
     if data_args.pad_to_max_length:
         padding = "max_length"
     else:
-        # We will pad later, dynamically at batch creation, to the max sequence length in each batch
         padding = False
 
-    ### important ###
     def preprocess_function(examples):
         # Tokenize the texts
         if type(examples['text'][0]) == list:
@@ -355,7 +296,6 @@ def main():
                 desc="Running tokenizer on train dataset",
             )
 
-        # Log a few random samples from the training set:
         for index in random.sample(range(len(train_dataset)), 3):
             logger.info(f"Sample {index} of the training set: {train_dataset[index]}.")
 
@@ -390,7 +330,6 @@ def main():
                 desc="Running tokenizer on prediction dataset",
             )
 
-    # Data collator will default to DataCollatorWithPadding, so we change it if we already did the padding.
     if data_args.pad_to_max_length:
         data_collator = default_data_collator
     elif training_args.fp16:
