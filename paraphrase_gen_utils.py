@@ -1,19 +1,14 @@
 from collections import Counter
 import openai
-# import backoff
 import torch
 import re
 from tqdm import trange
-# from detection_utils import run_bert_score
 
 device = 'cuda' if torch.cuda.is_available() else "cpu"
 from parrot import Parrot
 
-# stops = set(stopwords.words('english'))
 stops = []
 
-
-# We slightly modify the Parrot class to make it more suitable for our use case
 class SParrot(Parrot):
     def __init__(self, model_tag="prithivida/parrot_paraphraser_on_T5", use_gpu=False):
         super().__init__(model_tag, use_gpu)
@@ -110,29 +105,6 @@ def compare_ngram_overlap(input_ngram, para_ngram):
         overlap += para_c[i]
     return overlap
 
-
-# def accept_by_bigram_overlap(sent, para_sents, tokenizer, bert_threshold=0.03):
-#     input_ids = tokenize(tokenizer, sent)
-#     input_bigram = build_bigrams(input_ids)
-#     para_ids = [tokenize(tokenizer, para) for para in para_sents]
-#     para_bigrams = [build_bigrams(para_id) for para_id in para_ids]
-#     min_overlap = len(input_ids)
-#
-#     bert_scores = [run_bert_score([sent], [para_sent]) for para_sent in para_sents]
-#     max_score = bert_scores[0]
-#     best_paraphrased = para_sents[0]
-#     score_threshold = bert_threshold * max_score
-#     for i in range(len(para_bigrams)):
-#         para_bigram = para_bigrams[i]
-#         overlap = compare_ngram_overlap(input_bigram, para_bigram)
-#         bert_score = bert_scores[i]
-#         diff = max_score - bert_score
-#         if overlap < min_overlap and len(para_ids[i]) <= 1.5 * len(input_ids) and (diff <= score_threshold):
-#             min_overlap = overlap
-#             best_paraphrased = para_sents[i]
-#     return best_paraphrased
-
-
 def gen_prompt(sent, context):
     prompt = f'''Previous context: {context} \n Current sentence to paraphrase: {sent}'''
     return prompt
@@ -142,17 +114,6 @@ def gen_bigram_prompt(sent, context, num_beams):
     prompt = f'''Previous context: {context} \n Paraphrase in {num_beams} different ways and return a numbered list : {sent}'''
     return prompt
 def gen_prompt_synonym(sent, context, num_paraphrases=5):
-    # prompt = (
-    #     f"Previous context: {context}\n"
-    #     f"Current sentence to paraphrase: {sent}\n"
-    #     f"Please provide {num_paraphrases} diverse paraphrased versions of this sentence in a numbered list.\n"
-    #     f"Requirements for Lexical Substitution Attack:\n"
-    #     f"1. Core Semantics: Strictly preserve the original meaning, facts, and entities. Do NOT alter sentiment.\n"
-    #     f"2. Lexical Diversity: Replace as many content words (verbs, adjectives, nouns) as naturally possible. Aim for substantial lexical variation.\n"
-    #     f"3. Structural Consistency: Keep the overall sentence structure (e.g., voice, clause order) largely unchanged.\n"
-    #     f"4. Local Grammatical Adjustment: Adjust grammar, prepositions, or articles as needed to ensure fluency.\n"
-    #     f"5. Output Diversity: Each paraphrase must use a different set of synonyms and avoid repetition.\n"
-    # )
     prompt = (
     f"Previous context: {context}\n"
     f"Current sentence to paraphrase: {sent}\n"
@@ -192,17 +153,13 @@ def gen_prompt_enhanced_paraphrase(sent, context, num_paraphrases=4):
     )
     return prompt
 def gen_prompt_paper_regular(sent, context):
-    """
-    SimMark 论文严格意义上的 Regular Attack Baseline
-    没有任何输出数量和格式约束，只测模型最自然的润色改写。
-    """
     prompt = (
         f"Previous context: {context}\n"
         f"Current sentence to paraphrase: {sent}"
     )
     return prompt
 
-def query_openai(client, prompt, temperature=1.0): # 默认 temperature
+def query_openai(client, prompt, temperature=1.0): 
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini", 
@@ -221,78 +178,5 @@ def query_openai(client, prompt, temperature=1.0): # 默认 temperature
         return response.choices[0].message.content
     except Exception as e:
         print(f"OpenAI API 调用出错: {e}")
-        return "" # 出错时返回空字符串，避免程序直接崩溃
+        return "" 
 
-# @backoff.on_exception(backoff.expo, openai.RateLimitError)
-# def query_openai(client, prompt):
-#     while True:
-#         try:
-#             response = client.chat.completions.create(
-#                 model="gpt-3.5-turbo",
-#                 messages=[
-#                     {
-#                         "role": "user",
-#                         "content": prompt
-#                     }
-#                 ],
-#                 temperature=1,
-#                 max_tokens=256,
-#                 top_p=1,
-#                 frequency_penalty=0,
-#                 presence_penalty=0
-#             )
-#         except openai.APIError:
-#             continue
-#         break
-#     return response.choices[0].message.content
-
-
-# use long context
-# @backoff.on_exception(backoff.expo, openai.RateLimitError)
-# def query_openai_bigram(client, prompt):
-#     while True:
-#         try:
-#             response = client.chat.completions.create(
-#                 model="gpt-3.5-turbo-16k",
-#                 messages=[
-#                     {
-#                         "role": "user",
-#                         "content": prompt
-#                     }
-#                 ],
-#                 temperature=1,
-#                 max_tokens=4096,
-#                 top_p=1,
-#                 frequency_penalty=0,
-#                 presence_penalty=0
-#             )
-#         except openai.APIError:
-#             continue
-#         break
-#     return response.choices[0].message.content
-
-
-# pick the paraphrases by openai
-# def pick_para(sent_list, tokenizer, all_paras, thres):
-#     # all_paras is a list shape: num of texts X num of paraphrases X number of beams
-#     data_len, para_texts, para_texts_bigram = [], [], [], []
-#     data_len = [len(t) for t in sent_list]
-#
-#     for i in trange(len(sent_list), desc="Picking paraphrases"):
-#         sents = sent_list[i]
-#         for j in range(len(sents)):
-#             sent = sents[j]
-#             # each sent has num_beams paraphrases
-#             paraphrases = all_paras[i][j]  # all beams
-#             para = accept_by_bigram_overlap(sent, paraphrases, tokenizer, bert_threshold=thres)
-#             para_texts_bigram.append(para)
-#             para_texts.append(paraphrases[0])
-#     output_no_bigram = []
-#     output_bigram = []
-#     # new_texts = []
-#     start_pos = 0
-#     for l in data_len:
-#         output_no_bigram.append(para_texts[start_pos: start_pos + l])
-#         output_bigram.append(para_texts_bigram[start_pos: start_pos + l])
-#         start_pos += l
-#     return output_no_bigram, output_bigram
