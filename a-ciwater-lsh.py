@@ -130,9 +130,6 @@ def main_v1():
     para7 = test_dataset['para_text7'] + eval_dataset['para_text7'] + train_dataset['para_text7']
     para8 = test_dataset['para_text8'] + eval_dataset['para_text8'] + train_dataset['para_text8']
 
-    # "/home/haojifei/dev_resource/huggingface/models/AbeHou/SemStamp-c4-sbert"
-    # "/home/haojifei/dev_resource/huggingface/models/sentence-transformers/all-mpnet-base-v1"
-    # "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-8B"
     # "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-4B"
     # "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-0.6B"
     embedder_path = "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-Embedding-8B"
@@ -142,13 +139,6 @@ def main_v1():
         device=device, batch_size=1, lsh_dim=3,
         sbert_type='base', lsh_model_path=embedder_path
     )
-
-    # embedder = OpenaiEmbedder(
-    #     model_name='text-embedding-3-large',
-    #     model_api_key='sk-d9GXiBuj1oYhyrqF4963E03d62Da4cF3A646E648E509A700',
-    #     model_api_base_url='https://chatapi.onechats.ai/v1/',  # "https://chatapi.onechats.top/v1/"
-    # )
-    # lsh_model = OpenAiLSHModel('cpu', 1, 3, embedder_path, 768)
 
     lsh_success: list[float] = []
     for t, p1, p2, p3, p4, p5, p6, p7, p8 in zip(texts, para1, para2, para3, para4, para5, para6, para7, para8):
@@ -186,7 +176,6 @@ def main_v1():
 
 def train(cfg):
     dataset = ParaphraseDataset(cfg.train_path, cfg)
-    # 🔥 这里的 batch_size 请在 Config 里大胆开到 64 或 128！
     loader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True, drop_last=True)
 
     model = SupConModel(cfg)
@@ -194,7 +183,6 @@ def train(cfg):
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    # 注意：因为用了 LoRA，这里只把 require_grad=True 的参数传给优化器
     optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=cfg.lr)
     scaler = GradScaler() # 混合精度神器
 
@@ -209,9 +197,6 @@ def train(cfg):
 
         for step, batch in enumerate(tqdm(loader, desc=f"Epoch {epoch + 1}/{cfg.epochs}")):
             anchor_texts, pos_texts = batch
-            
-            # 🔥 魔法拼接：[a1...an, a1_copy...an_copy, p1...pn]
-            # 这样 anchor 会进模型两次，靠内部的 Dropout 自然产生差异（SimCSE）
             texts = list(anchor_texts) + list(anchor_texts) + list(pos_texts)
             bsz = len(anchor_texts)
 
@@ -219,61 +204,45 @@ def train(cfg):
             optimizer.zero_grad()
 
             with autocast():
-                # 跑一次前向传播，拿到所有 Embedding
                 features = model(input_ids=enc['input_ids'], attention_mask=enc['attention_mask'])
                 
-                # 优雅切割
-                z_a1 = features[:bsz]          # Anchor 第一次
-                z_a2 = features[bsz: 2*bsz]    # Anchor 第二次 (Dropout差异)
-                z_p  = features[2*bsz:]        # Paraphrase 正样本
+                z_a1 = features[:bsz]          
+                z_a2 = features[bsz: 2*bsz]    
+                z_p  = features[2*bsz:]        
                 z_a1 = F.normalize(z_a1, p=2, dim=1)
                 z_a2 = F.normalize(z_a2, p=2, dim=1)
                 z_p  = F.normalize(z_p, p=2, dim=1)
-                # 标准 InfoNCE 的目标标签对角线：0, 1, 2... bsz-1
                 labels = torch.arange(bsz, device=cfg.device)
 
                 simcse_logits = torch.matmul(z_a1, z_a2.T) / cfg.temperature
                 loss_simcse = F.cross_entropy(simcse_logits, labels)
-
-                # 💡 Loss B：SupCon 洗稿主线任务
                 supcon_logits = torch.matmul(z_a1, z_p.T) / cfg.temperature
                 loss_supcon = F.cross_entropy(supcon_logits, labels)
-
-                # 🔥 你的封神改动：打破五五开，确立主从地位！
-                # SupCon 是 LSH 鲁棒性的核心，SimCSE 是防止空间坍缩的底线
                 loss = 0.7 * loss_supcon + 0.3 * loss_simcse
-                
-                # 👇 新增：1. 将 Loss 除以累加步数，平摊梯度
                 loss = loss / cfg.grad_accum_steps
 
-            # 👇 2. 正常反向传播（每次都累加梯度，但不马上更新权重）
             scaler.scale(loss).backward()
 
-            # 👇 新增：3. 只有达到累加步数（或者是最后一个 batch）才执行权重更新
             if (step + 1) % cfg.grad_accum_steps == 0 or (step + 1) == len(loader):
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
-                optimizer.zero_grad()  # 🚨 必须在这里：更新完权重后才清空梯度！
+                optimizer.zero_grad()  
                 scheduler.step()
 
-            # 👇 4. 日志和监控部分
             if len(losses) % 50 == 0:
                 with torch.no_grad():
-                    # 监控查看两组相似度
                     sim_self = torch.cosine_similarity(z_a1[0].unsqueeze(0), z_a2[0].unsqueeze(0)).item()
                     sim_para = torch.cosine_similarity(z_a1[0].unsqueeze(0), z_p[0].unsqueeze(0)).item()
                     sim_neg  = torch.cosine_similarity(z_a1[0].unsqueeze(0), z_p[1].unsqueeze(0)).item()
                     
-                    # 💡 注意：为了让你在日志里看到“真实”的 Loss 大小，这里把它乘回去了
                     real_loss = loss.item() * cfg.grad_accum_steps
                     print(f"\n[质检] 总Loss: {real_loss:.4f} (SimCSE: {loss_simcse.item():.2f}, Para: {loss_supcon.item():.2f})")
                     print(f"[监控] 自身Dropout相似度: {sim_self:.4f}")
                     print(f"[监控] 洗稿正样本相似度: {sim_para:.4f}")
                     print(f"[监控] Batch内负样本相似度: {sim_neg:.4f}\n")
 
-            # 💡 同样，记录到列表里计算平均值的也是真实的 loss
             losses.append(loss.item() * cfg.grad_accum_steps)
 
         print(f"Epoch {epoch + 1}: avg_loss={sum(losses) / len(losses):.4f}")
@@ -290,7 +259,7 @@ class Config:
     lr: float = 2e-5
     epochs: int = 10
     batch_size: int = 8 
-    grad_accum_steps: int = 8  # 8 * 8 = 等效 64 的大 batch
+    grad_accum_steps: int = 8  
     max_len: int = 128
     temperature: float = 0.05
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
