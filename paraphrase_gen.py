@@ -10,153 +10,17 @@ import random
 import re
 from typing import List
 import logging
-# import pickle
 from concurrent.futures import ThreadPoolExecutor
 
 import torch
 from nltk import sent_tokenize
 from tqdm import tqdm, trange
-# from transformers import AutoTokenizer
-# from transformers import PegasusForConditionalGeneration, PegasusTokenizer
 from datasets import load_from_disk, Dataset, DatasetDict
 import openai
-# from dipper import DipperParaphraser
-# from paraphrase_gen_utils import accept_by_bigram_overlap, SParrot
 #from paraphrase_gen_utils import gen_prompt, query_openai#query_openai_bigram, gen_bigram_prompt, extract_list重述攻击
 from paraphrase_gen_utils import gen_prompt, query_openai, gen_prompt_synonym # gen_prompt_synonym同义词替换攻击
 #from paraphrase_gen_utils import gen_prompt, query_openai, gen_prompt_backtranslation_standard#回译攻击
-#from paraphrase_gen_utils import gen_prompt, query_openai, gen_prompt_paper_regular, gen_prompt_pure_bt_step1, gen_prompt_pure_bt_step2, gen_prompt_enhanced_paraphrase, extract_list
-# from sampling_utils import well_formed_sentence
-
-# device = 'cuda' if torch.cuda.is_available() else "cpu"
-# num_beams = 25
-
-
-# def pegasus_paraphrase(
-#         texts, tokenizer,
-#         paraphraser_name="tuner007/pegasus_paraphrase",
-#         device='cuda', num_beams=10,
-#         temp=2, bsz=-1, bigram=False, bert_threshold=0.03
-# ):
-#     paraphraser = PegasusForConditionalGeneration.from_pretrained(paraphraser_name).to(device)
-#     paraphraser_tokenizer = PegasusTokenizer.from_pretrained(paraphraser_name)
-#
-#     def paraphrase(sents):
-#         '''
-#         Arguments:
-#             sents: list of sentences (max len under 60!)
-#         Returns:
-#             paraphrased: list of paraphrased sents
-#         '''
-#         batch = paraphraser_tokenizer(
-#             sents, truncation=True, padding='longest', return_tensors="pt", max_length=60).to(device)
-#
-#         paraphrased_ids = paraphraser.generate(
-#             **batch, max_length=60, num_beams=num_beams, num_return_sequences=num_beams, temperature=temp,
-#             repetition_penalty=1.03)
-#         # batch decode and return the first one
-#         paraphrased = [paraphraser_tokenizer.decode(paraphrased_ids[i * num_beams], skip_special_tokens=True) for i in
-#                        range(len(paraphrased_ids) // num_beams)]
-#         # breakpoint()
-#
-#         return paraphrased
-#
-#     # dataset has to be a text list
-#     sents, data_len = [], []
-#     for text in tqdm(texts, desc="Tokenizer"):
-#         sent_list = sent_tokenize(text)
-#         sents.extend(sent_list)
-#         data_len.append(len(sent_list))
-#     paras = []
-#
-#     if bsz != -1:
-#         batched_sents = [sents[i:i + bsz] for i in range(0, len(sents), bsz)]
-#         for batch in tqdm(batched_sents, desc="Paraphrasing"):
-#             paraphrased = paraphrase(batch)
-#             paras.extend(paraphrased)
-#
-#     else:
-#         for sent in tqdm(sents):
-#             paraphrased = paraphrase([sent])
-#             paraphrased = [well_formed_sentence(para) for para in paraphrased]
-#             if bigram:
-#                 para = accept_by_bigram_overlap(sent, paraphrased, tokenizer, bert_threshold)
-#             else:
-#                 para = paraphrased[0]
-#             paras.append(para)
-#
-#     start_pos = 0
-#     output = []
-#     new_texts = []
-#     for l in data_len:
-#         output.append(paras[start_pos: start_pos + l])
-#         new_texts.append(sents[start_pos: start_pos + l])
-#         start_pos += l
-#     new_dataset = Dataset.from_dict(
-#         {'text': new_texts, 'para_text': output})
-#     name = args.data_path + \
-#            f'-pegasus-bigram={bigram}-threshold={bert_threshold}'
-#     new_dataset.save_to_disk(name)
-#     return output
-#
-#
-# def parrot_paraphrase(
-#         parrot, texts, tokenizer, num_beams=10, bigram=False, save_to_disk=True, avg_sent_len=20,
-#         save_by_sents=False, bert_threshold=0.03
-# ):
-#     # modified parrot source code to have the num_beams argument
-#     def paraphrase(sent):
-#         para_phrases = parrot.augment(
-#             input_phrase=sent,
-#             use_gpu=True,
-#             diversity_ranker="levenshtein",
-#             do_diverse=True,
-#             max_return_phrases=num_beams,
-#             max_length=60,
-#             adequacy_threshold=0.8,
-#             fluency_threshold=0.8
-#         )
-#         return para_phrases
-#
-#     sents, data_len = [], []
-#     for text in tqdm(texts, desc="Tokenizer"):
-#         sent_list = sent_tokenize(text)
-#         sents.extend(sent_list)
-#         data_len.append(len(sent_list))
-#     start_pos = 0
-#     paras = []
-#     total_paraphrased = []
-#     for sent in tqdm(sents):
-#         paraphrased = paraphrase(sent)
-#         paraphrased = [well_formed_sentence(
-#             para, end_sent=True) for para in paraphrased]
-#         total_paraphrased.append(paraphrased)
-#         if bigram:
-#             para = accept_by_bigram_overlap(sent, paraphrased, tokenizer, bert_threshold=bert_threshold)
-#         paras.append(para)
-#     start_pos = 0
-#     output = []
-#     new_texts = []
-#     if save_by_sents:
-#         for l in data_len:
-#             output.append(paras[start_pos: start_pos + l])
-#             new_texts.append(sents[start_pos: start_pos + l])
-#             start_pos += l
-#     elif save_to_disk:
-#         new_texts = texts
-#         for l in data_len:
-#             output.append(" ".join(paras[start_pos: start_pos + l]))
-#             start_pos += l
-#     new_dataset = Dataset.from_dict({'text': new_texts, 'para_text': output})
-#     name = args.data_path + \
-#            f'-parrot-bigram={bigram}-threshold={bert_threshold}'
-#     new_dataset.save_to_disk(name)
-#     pkl_name = args.data_path + f'-parrot-bigram={bigram}-threshold={bert_threshold}-all_beams.pkl'
-#     with open(pkl_name, 'wb') as f:
-#         pickle.dump(total_paraphrased, f)
-#         f.close()
-#     return output
-
+#from paraphrase_gen_utils import gen_prompt, query_openai, gen_prompt_paper_regular, gen_prompt_pure_bt_step1, gen_prompt_pure_bt_step2, gen_prompt_enhanced_paraphrase, extract_list#回译攻击
 
 def paraphrase_openai(client, texts: List[str], num_beams: int, bigram: bool = False):
     new_texts = []
@@ -172,19 +36,6 @@ def paraphrase_openai(client, texts: List[str], num_beams: int, bigram: bool = F
             num_iter = 0
             if bigram:
                 pass
-                # para_ls = []
-                # prompt = gen_bigram_prompt(sent, context, num_beams)
-                # # if insufficient number of para_sents generated, try again
-                # while (len(para_ls) < 5 and num_iter < MAX_ITER):
-                #     para_str = query_openai_bigram(client, prompt)
-                #     # use regex to extract list from string
-                #     para_ls = extract_list(para_str)
-                #     num_iter += 1
-                #     # openai refuses to paraphrase, thendiscard
-                # if num_iter <= MAX_ITER:
-                #     para_sents.append(para_ls)
-                # else:
-                #     fail = True
             else:
                 prompt = gen_prompt(sent, context)
                 para = query_openai(client, prompt)
@@ -194,20 +45,15 @@ def paraphrase_openai(client, texts: List[str], num_beams: int, bigram: bool = F
             all_paras.append(para_sents)
 
     save_path = args.data_path + f'-openai-num_beams={num_beams}-bigram={bigram}'
-    # Dataset.from_dict({'text': new_texts, 'para_text': all_paras}).save_to_disk(save_path)
 
-    # 构建基础 Dataset
     dataset = Dataset.from_dict({'text': new_texts, 'para_text': all_paras})
-    # 划分数据集：7:2:1 → train:70%, validation:20%, test:10%
-    train_test_split = dataset.train_test_split(test_size=0.3, seed=42)  # 先切出 30% 做 test+valid
-    test_valid = train_test_split['test'].train_test_split(test_size=0.333)  # 0.3 * 0.333 ≈ 0.1 → test=10%
-    # 构造 DatasetDict
+    train_test_split = dataset.train_test_split(test_size=0.3, seed=42)  
+    test_valid = train_test_split['test'].train_test_split(test_size=0.333)  
     final_dataset = DatasetDict({
-        'train': train_test_split['train'],  # 70%
-        'valid': test_valid['train'],  # 约 20%
-        'test': test_valid['test']  # 约 10%
+        'train': train_test_split['train'],  
+        'valid': test_valid['train'],  
+        'test': test_valid['test']  
     })
-    # 保存到磁盘
     final_dataset.save_to_disk(save_path)
     print(f"数据集已保存至：{save_path}")
 
@@ -229,8 +75,6 @@ def gen_prompt_v2(sent, context, num_paraphrases=5):
 
 
 def extract_list(text):
-    """从 GPT 输出中提取列表项"""
-    # 如果 text 是 None 或空字符串，直接返回空列表
     if not text:
         return []
         
@@ -240,7 +84,6 @@ def extract_list(text):
 
 
 def random_mask_tokens(tokens: List[str], mask_rate: float, tokenizer):
-    """随机mask部分token"""
     output = []
     for tok in tokens:
         if random.random() < mask_rate:
@@ -257,7 +100,6 @@ def paraphrase_openai_v2(
         max_loop: int = 10
 ):
     new_texts = []
-    # all_paras = []
     all_paras1 = []
     all_paras2 = []
     all_paras3 = []
@@ -343,16 +185,11 @@ def paraphrase_openai_v2(
             
             if consecutive_fail_count >= MAX_CONSECUTIVE_FAILS:
                 logger.error(f"❌ 连续 {MAX_CONSECUTIVE_FAILS} 次失败！程序即将挂起 (类似 Ctrl+Z)。")
-                logger.info("👉 修复问题后，在终端输入 'fg' 命令即可恢复运行...")
-                
-                # 👇 关键代码：向当前进程发送 SIGTSTP 信号，模拟 Ctrl+Z
+                logger.info("👉 修复问题后，在终端输入 'fg' 命令即可恢复运行...")                
                 os.kill(os.getpid(), signal.SIGTSTP)
-                
-                # 挂起恢复后，重置计数器并继续循环
                 logger.info("▶️ 进程已恢复！重置失败计数器，继续执行...")
                 consecutive_fail_count = 0
 
-    # 构建基础 Dataset
     dataset = Dataset.from_dict({
         'text': new_texts,
         'para_text1': all_paras1,
@@ -395,7 +232,6 @@ def paraphrase_pegasus_clean(texts, local_model_path, start_i, end_i, num_beams=
         
         for sent in sents:
             batch = tokenizer(sent, truncation=True, padding='longest', return_tensors="pt", max_length=60).to(device)
-            # 使用 Pegasus 官方推荐的重述生成参数
             translated = model.generate(**batch, max_length=60, num_beams=num_beams, num_return_sequences=1)
             tgt_text = tokenizer.batch_decode(translated, skip_special_tokens=True)
             para_sents1.append(tgt_text[0])
@@ -421,7 +257,6 @@ def paraphrase_pegasus_clean(texts, local_model_path, start_i, end_i, num_beams=
     save_path = args.data_path + f'-pegasus-{start_i}_{end_i}'
     final_dataset.save_to_disk(save_path)
     logger.info(f"Pegasus 数据集已安全保存至：{save_path}")
-# python paraphrase_gen.py --data_path data/c4-train-8000
 def paraphrase_openai_baseline(
         client, texts: List[str],
         start_i: int, end_i: int,
@@ -470,13 +305,11 @@ def paraphrase_openai_baseline(
             new_texts.append(sents)
             all_paras1.append(para_sents1)
 
-    # 构建基础 Dataset (只有 para_text1)
     dataset = Dataset.from_dict({
         'text': new_texts,
         'para_text1': all_paras1,
     })
 
-    # 划分数据集 7:2:1
     train_test_split = dataset.train_test_split(test_size=0.3, seed=42)
     test_valid = train_test_split['test'].train_test_split(test_size=0.333)
 
@@ -493,7 +326,6 @@ def paraphrase_openai_baseline(
 
     return new_texts, 1
 def process_single_sentence_bt(curr_sent, client, max_loop):
-    """用于多线程处理单句纯回译的辅助函数"""
     num_iter = 0
     final_english = ""
     while not final_english and num_iter < max_loop:
@@ -525,12 +357,10 @@ def paraphrase_openai_pure_bt(
     MAX_WORKERS = 10 
 
     for i, text in enumerate(texts):
-        # 1. 剥离 Prompt
         raw_text_str = " ".join(text) if isinstance(text, list) else text
         prompt = extract_prompt_from_text(raw_text_str, 32)
         gen_text = raw_text_str[len(prompt):].strip()
         
-        # 2. 只切分生成文本
         sents = sent_tokenize(gen_text)
         para_sents1 = []
         is_all_done = True
@@ -549,7 +379,6 @@ def paraphrase_openai_pure_bt(
                     break
 
         if is_all_done:
-            # 3. 拼回 Prompt
             new_texts.append([prompt] + sents)
             all_paras1.append([prompt] + para_sents1)
             logger.info(f"[{i}] 处理完成！")
@@ -557,8 +386,6 @@ def paraphrase_openai_pure_bt(
             logger.warning(f"[{i}] 有句子连续 {max_loop} 次请求失败，跳过该段落。")
             fail_texts_index.append(i)
 
-
-    # === 下方的数据集保存逻辑保持不变 ===
     dataset = Dataset.from_dict({
         'text': new_texts,
         'para_text1': all_paras1,
@@ -580,25 +407,17 @@ def paraphrase_openai_pure_bt(
 
     return new_texts, 1
 if __name__ == '__main__':
-    # 配置 logging
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
-
-    # 创建一个 formatter（格式器）
     formatter = logging.Formatter('%(asctime)s-%(name)s-%(levelname)s: %(message)s')
-
-    # 输出到控制台的 Handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-
-    # 输出到文件的 Handler
     file_handler = logging.FileHandler(f'{__file__}.log', encoding='utf-8')
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str)
     parser.add_argument('--model_path', type=str, default='AbeHou/opt-1.3b-semstamp')
@@ -613,7 +432,7 @@ if __name__ == '__main__':
             'pegasus-bigram',
             'openai-bigram',
             'openai-baseline',
-            'openai-pure-bt',          # <=== 新增：纯回译基线
+            'openai-pure-bt',          
             'openai-enhanced-attack'
         ]
     )
@@ -646,26 +465,6 @@ if __name__ == '__main__':
     texts = dataset['text'][start_i:end_i]
     del dataset
 
-    # if args.paraphraser == 'parrot':
-    #     parrot = SParrot()
-    #     parrot_paraphrase(
-    #         parrot, texts, tokenizer, num_beams=args.num_beams,
-    #         bert_threshold=args.bert_threshold
-    #     )
-    # elif args.paraphraser == 'parrot-bigram':
-    #     parrot = SParrot()
-    #     parrot_paraphrase(
-    #         parrot, texts, tokenizer, num_beams=args.num_beams,
-    #         bert_threshold=args.bert_threshold, bigram=True
-    #     )
-    # elif args.paraphraser == 'pegasus-bigram':
-    #     pegasus_paraphrase(
-    #         texts, tokenizer, num_beams=args.num_beams, bert_threshold=args.bert_threshold, bigram=True
-    #     )
-    # elif args.paraphraser == 'pegasus':
-    #     pegasus_paraphrase(
-    #         texts, tokenizer, num_beams=args.num_beams, bert_threshold=args.bert_threshold, bsz=args.bsz
-    #     )
     if args.paraphraser == 'openai':
         client = openai.OpenAI(
             api_key=os.getenv('OPENAI_API_KEY'),
@@ -692,7 +491,6 @@ if __name__ == '__main__':
         new_texts, paras = paraphrase_openai_baseline(
             client, texts, start_i, end_i, max_loop=args.max_iter
         )
-        # === 新增：学术纯回译基线 ===
     elif args.paraphraser == 'openai-pure-bt':
         client = openai.OpenAI(
             api_key=os.getenv('OPENAI_API_KEY'),
@@ -702,13 +500,11 @@ if __name__ == '__main__':
             client, texts, start_i, end_i, max_loop=args.max_iter
         )
         
-    # === 你原来的：增强型上下文攻击 ===
     elif args.paraphraser == 'openai-enhanced-attack':
         client = openai.OpenAI(
             api_key=os.getenv('OPENAI_API_KEY'),
             base_url=os.getenv('OPENAI_BASE_URL')
         )
-        # 注意：这里需要把你原来 paraphrase_openai_v2 里调用的 prompt 换成 gen_prompt_enhanced_paraphrase
         new_texts, paras = paraphrase_openai_v2(
             client, texts, start_i, end_i, num_paraphrases=args.num_beams, max_loop=args.max_iter
         )
