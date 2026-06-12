@@ -32,7 +32,6 @@ def get_seed_from_lsh(lsh_sig):
     sig_str = str(lsh_sig)
     return int(hashlib.md5(sig_str.encode('utf-8')).hexdigest(), 16) % (2**31 - 1)
 
-# ----------------- 跨句哈希 Token 级检测 -----------------
 def detect_lsh(raw_text, lsh_model, lmbd, lsh_dim, tokenizer):
     import math
     import torch
@@ -41,8 +40,6 @@ def detect_lsh(raw_text, lsh_model, lmbd, lsh_dim, tokenizer):
     
     if isinstance(raw_text, list):
         raw_text = " ".join(raw_text)
-
-    # 🌟 核心修复：加入 Prompt 剥离逻辑 🌟
     prompt = extract_prompt_from_text(raw_text, len_prompt=32)
     generated_text = raw_text[len(prompt):].strip()
     if not generated_text:
@@ -56,7 +53,6 @@ def detect_lsh(raw_text, lsh_model, lmbd, lsh_dim, tokenizer):
     if len(gen_sents) == 0:
         return None
 
-    # 组装检测链条
     chunks = [prompt] + gen_sents
 
     total_green = 0
@@ -94,7 +90,6 @@ def detect_lsh(raw_text, lsh_model, lmbd, lsh_dim, tokenizer):
         lsh_sig = lsh_model.get_hash([context_sentence])[0]
         current_seed = get_seed_from_lsh(lsh_sig)
 
-        # 🌟 保持 CPU 绿名单密码本一致 🌟
         rng = torch.Generator(device='cpu')
         rng.manual_seed(current_seed)
         vocab_permutation = torch.randperm(vocab_size, generator=rng)
@@ -120,15 +115,11 @@ def detect_lsh_sweet(raw_text, lsh_model, lmbd, lsh_dim, tokenizer, llm_model, s
     import math
     import torch
     from nltk.tokenize import sent_tokenize
-    # 确保当前文件有 extract_prompt_from_text，你文件里有定义
-    
-    # 1. 强制关闭 Dropout，稳定计算熵值
     llm_model.eval()
 
     if isinstance(raw_text, list):
         raw_text = " ".join(raw_text)
 
-    # 2. 🌟 必须加回来的 Prompt 切分与对齐逻辑 🌟
     prompt = extract_prompt_from_text(raw_text, len_prompt=32)
     generated_text = raw_text[len(prompt):].strip()
     if not generated_text:
@@ -136,21 +127,15 @@ def detect_lsh_sweet(raw_text, lsh_model, lmbd, lsh_dim, tokenizer, llm_model, s
 
     gen_sents = sent_tokenize(generated_text)
     
-    # 过滤未完成的残句
     if len(gen_sents) > 1 and gen_sents[-1].strip()[-1] not in ".!?。！？\"'":
         gen_sents = gen_sents[:-1]
 
     if len(gen_sents) == 0:
         return None
-
-    # 组装完美的检测链条
     chunks = [prompt] + gen_sents
     total_green = 0
     total_tokens = 0
-    
-    # 保持和你基础 detect_lsh 一致的词表大小
     vocab_size = len(tokenizer)
-
     last_end_pos = raw_text.find(chunks[0])
     if last_end_pos != -1:
         last_end_pos += len(chunks[0])
@@ -183,8 +168,6 @@ def detect_lsh_sweet(raw_text, lsh_model, lmbd, lsh_dim, tokenizer, llm_model, s
         lsh_sig = lsh_model.get_hash([context_sentence])[0]
         from detection_utils import get_seed_from_lsh
         current_seed = get_seed_from_lsh(lsh_sig)
-
-        # 3. 🌟 保持使用 CPU 和未乘以 hash_key 的原始密码本 🌟
         rng = torch.Generator(device='cpu')
         rng.manual_seed(current_seed) 
         vocab_permutation = torch.randperm(vocab_size, generator=rng)
@@ -233,7 +216,6 @@ def detect_lsh_sweet(raw_text, lsh_model, lmbd, lsh_dim, tokenizer, llm_model, s
 
     zscore = (total_green - expected_green) / math.sqrt(variance)
     return zscore
-# --- 以下辅助函数保持不变 ---
 def flatten_gens_and_paras(gens, paras):
     new_gens = []
     new_paras = []
@@ -300,11 +282,7 @@ def detect_semstamp_official(raw_text, lsh_model, lmbd, lsh_dim, tokenizer=None)
     if isinstance(raw_text, list):
         raw_text = " ".join(raw_text)
         
-    # 1. 提取出生成时的完整 Prompt
     prompt = extract_prompt_from_text(raw_text, len_prompt=32)
-    
-    # 2. 🌟 恢复官方 SemStamp 的 Token 级逐词解码逻辑 🌟
-    # 完美复刻生成时带有 BPE 边界空格的子串，确保 Hash 绝对一致
     text_ids = tokenizer.encode(raw_text, add_special_tokens=False)
     prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
     
@@ -335,13 +313,9 @@ def detect_semstamp_official(raw_text, lsh_model, lmbd, lsh_dim, tokenizer=None)
         
     total_green = 0
     total_sents = len(chunks) - 1
-    
-    # 3. 初始 Seed 由 Prompt 的 Hash 决定
     lsh_seed = lsh_model.get_hash([chunks[0]])[0]
     from detection_utils import get_mask_from_seed_gpu
     accept_mask = get_mask_from_seed_gpu(lsh_dim, lmbd, lsh_seed)
-    
-    # 4. 遍历生成的句子，进行马尔可夫链式检验
     for i in range(1, len(chunks)):
         current_sentence = chunks[i]
         lsh_candidate = lsh_model.get_hash([current_sentence])[0]
@@ -359,7 +333,6 @@ def detect_semstamp_official(raw_text, lsh_model, lmbd, lsh_dim, tokenizer=None)
         
     zscore = (total_green - expected) / math.sqrt(variance)
     return zscore
-# --------- 完美对齐截断过程的 K-Means 检测逻辑 ---------
 def detect_kmeans(raw_text, embedder, lmbd, k_dim, cluster_centers, tokenizer):
     import math
     import torch
@@ -369,14 +342,12 @@ def detect_kmeans(raw_text, embedder, lmbd, k_dim, cluster_centers, tokenizer):
     if isinstance(raw_text, list):
         raw_text = " ".join(raw_text)
         
-    # 1. 提取出生成时的完整 Prompt
     prompt = extract_prompt_from_text(raw_text, len_prompt=32)
     
-    # 2. 🌟核心修复🌟：完全模拟大模型生成时的 Token 逐词截断过程，复刻那些残缺的句子切片
     text_ids = tokenizer.encode(raw_text, add_special_tokens=False)
     prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
     
-    chunks = [prompt] # 第一个必定是 prompt
+    chunks = [prompt] 
     current_num_sentences = len(sent_tokenize(prompt))
     last_chunk_end_idx = len(prompt_ids)
     
@@ -400,8 +371,6 @@ def detect_kmeans(raw_text, embedder, lmbd, k_dim, cluster_centers, tokenizer):
         
     if len(chunks) <= 1:
         return None
-        
-    # 3. K-Means 验证逻辑 (这部分不变)
     hash_key = 15485863
     total_green = 0
     total_sents = len(chunks) - 1
@@ -434,7 +403,6 @@ def detect_kmeans(raw_text, embedder, lmbd, k_dim, cluster_centers, tokenizer):
 def detect_kgw_sweet(raw_text, fraction, tokenizer, llm_model, sweet_threshold=0.6, hash_key=15485863):
     import math
     import torch
-    # 确保当前文件中有 extract_prompt_from_text
     from detection_utils import extract_prompt_from_text
 
     llm_model.eval()
@@ -442,7 +410,6 @@ def detect_kgw_sweet(raw_text, fraction, tokenizer, llm_model, sweet_threshold=0
     if isinstance(raw_text, list):
         raw_text = " ".join(raw_text)
 
-    # 1. 剥离 Prompt 找到生成文本的起始位置
     prompt = extract_prompt_from_text(raw_text, len_prompt=32)
     
     text_ids = tokenizer.encode(raw_text, add_special_tokens=False)
@@ -450,15 +417,13 @@ def detect_kgw_sweet(raw_text, fraction, tokenizer, llm_model, sweet_threshold=0
     
     gen_start_idx = len(prompt_ids)
     if gen_start_idx >= len(text_ids):
-        return None # 未检测到有效生成文本
+        return None 
 
-    # 2. 将整段文本送入 LLM，一次性获取所有 Token 的预测分布
     inputs = tokenizer(raw_text, return_tensors="pt").to(llm_model.device)
     with torch.no_grad():
         outputs = llm_model(**inputs)
         logits = outputs.logits[0]
 
-    # 3. 计算每个位置的文本信息熵
     probs = torch.softmax(logits.float(), dim=-1)
     safe_probs = torch.clamp(probs, min=1e-9, max=1.0)
     entropies = (-torch.sum(probs * torch.log(safe_probs), dim=-1)).cpu().tolist()
@@ -470,7 +435,6 @@ def detect_kgw_sweet(raw_text, fraction, tokenizer, llm_model, sweet_threshold=0
     total_tokens = 0
     vocab_size = len(tokenizer)
 
-    # 4. Token 级别逐词检测
     for k in range(gen_start_idx, len(text_ids)):
         prev_token = text_ids[k-1]
         curr_token = text_ids[k]
@@ -478,14 +442,9 @@ def detect_kgw_sweet(raw_text, fraction, tokenizer, llm_model, sweet_threshold=0
         # logits[k-1] 预测的是 text_ids[k]
         entropy = entropies[k-1] 
         
-        # 🚨 SWEET 核心：熵值低于阈值，说明生成时被跳过了，检测也跳过
         if entropy < sweet_threshold:
             continue
-
-        # 🚨 严格对齐 KGW 官方生成逻辑：通过前一个 Token 计算 Seed
         seed = (hash_key * prev_token) % (2**31 - 1)
-        
-        # 🚨 致命细节：生成时是在 GPU 打乱的，检测也必须在同设备同机制打乱！
         rng = torch.Generator(device=llm_model.device)
         rng.manual_seed(seed)
         
