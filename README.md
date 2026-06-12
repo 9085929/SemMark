@@ -102,10 +102,13 @@ This step generates the exported encoder used during watermark generation and de
 
 ## Step 3: Generate Watermarked Text
 
-Generate watermarked samples:
+Generate watermarked samples with SemMark:
 
 ```bash
-python sampling.py
+CUDA_VISIBLE_DEVICES=0,1 python sampling.py \
+  dataset/benchmark_datasets/realnews_10k-8000-pegasus-merged/test \
+  --model /path/to/Qwen3-8B \
+  --embedder /path/to/my_watermark_embedder_finetuned_realnews \
 ```
 
 SemMark uses:
