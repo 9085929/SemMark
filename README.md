@@ -22,7 +22,7 @@ The framework avoids expensive rejection sampling while maintaining strong robus
   <img src="Figure/framework.png" width="95%">
 </p>
 
-Overview of SemMark. The watermark signal is generated from the semantic signature of the previous sentence through locality-sensitive hashing (LSH), and injected into high-entropy decoding positions via entropy-aware logit modulation.
+The process of watermark injection during generation. Watermark injection uses the semantic signature of the preceding sentence to generate a seed, split the vocabulary into green/red lists, and bias only high-entropy decoding positions for robust and fluent watermarking.
 
 ## Main Results
 
@@ -139,20 +139,6 @@ CUDA_VISIBLE_DEVICES=0,1 python detection_sweet.py \
   --detection_mode lsh \
   --model path/to/Qwen3-8B \
 ```
----
-
-## Main Files
-
-| File               | Description                           |
-| ------------------ | ------------------------------------- |
-| a-ciwater-lsh.py   | Contrastive semantic encoder training |
-| export_model.py    | Export trained embedding model        |
-| sampling.py        | Watermark generation                  |
-| paraphrase_gen.py  | Adversarial attack generation         |
-| detection_sweet.py | Watermark detection                   |
-| eval_clm.py        | Text quality evaluation               |
-| calibrate_sweet.py | Entropy threshold calibration         |
-
 ---
 
 ## Citation
