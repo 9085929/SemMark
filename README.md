@@ -34,7 +34,6 @@ Overview of SemMark. The watermark signal is generated from the semantic signatu
 <p align="center">
 Performance comparison against SWEET, SemStamp, and K-SemStamp across RealNews, Reddit-TIFU, and BookSum datasets under multiple adversarial attacks.
 </p>
----
 
 ## Environment Setup
 
