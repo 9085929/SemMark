@@ -1,0 +1,5 @@
+Algorithm,Latency,Slowdown
+SWEET,1.135,1.00x
+SemMark (Ours),1.696,1.49x
+SemStamp,20.198,17.79x
+K-SemStamp,46.992,41.40x
