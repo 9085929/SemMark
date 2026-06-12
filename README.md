@@ -141,7 +141,7 @@ CUDA_VISIBLE_DEVICES=0,1 python detection_sweet.py \
   --human_text path/to/human_reference_dataset \
   --detection_mode lsh \
   --model path/to/Qwen3-8B \
-
+```
 ---
 
 ## Main Files
@@ -169,11 +169,4 @@ CUDA_VISIBLE_DEVICES=0,1 python detection_sweet.py \
 ```
 
 ---
-
-## Contact
-
-Zihao Qiang
-
-Yangzhou University
-
-Email: [mx120250577@stu.yzu.edu.cn](mailto:mx120250577@stu.yzu.edu.cn)
+If you have any questions, please feel free to contact  [mx120250577@stu.yzu.edu.cn](mailto:mx120250577@stu.yzu.edu.cn).
