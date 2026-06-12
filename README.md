@@ -46,13 +46,10 @@ pip install -r requirements.txt
 
 ## Model Download
 
-The models used in our experiments are available at the following links:
-
-* **Generation Model:** [Qwen3-8B][qwen3-8b]
-* **Embedding Model:** [Qwen3-Embedding-0.6B][qwen3-embedding]
-
-[qwen3-8b]: https://huggingface.co/Qwen/Qwen3-8B
-[qwen3-embedding]: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
+| Model | Link |
+|---------|---------|
+| Generation Model | [Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B) |
+| Embedding Model | [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) |
 
 ---
 
@@ -122,7 +119,6 @@ Generate paraphrased adversarial texts using GPT-4o-mini:
 
 ```bash
 python paraphrase_gen.py \
-  python paraphrase_gen.py \
   --data_path path/to/watermarked_dataset \
   --paraphraser openai
 ```
@@ -139,6 +135,8 @@ CUDA_VISIBLE_DEVICES=0,1 python detection_sweet.py \
   --detection_mode lsh \
   --model path/to/Qwen3-8B \
 ```
+The detector reconstructs semantic seeds from the generated text and evaluates watermark presence using z-score based statistical testing.
+
 ---
 
 ## Citation
