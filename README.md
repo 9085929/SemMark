@@ -138,16 +138,4 @@ CUDA_VISIBLE_DEVICES=0,1 python detection_sweet.py \
 The detector reconstructs semantic seeds from the generated text and evaluates watermark presence using z-score based statistical testing.
 
 ---
-
-## Citation
-
-```bibtex
-@article{qiang2026semmark,
-  title={SemMark: Robust Large Language Model Watermarking via Semantic Chain-Binding},
-  author={Qiang, Zihao and Qiang, Jipeng and Hao, Jifei and Zhu, Yi and Zhao, Xiangyu and Sun, Zhu},
-  year={2026}
-}
-```
-
----
 If you have any questions, please feel free to contact  [mx120250577@stu.yzu.edu.cn](mailto:mx120250577@stu.yzu.edu.cn).
