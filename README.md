@@ -22,18 +22,15 @@ The framework avoids expensive rejection sampling while maintaining strong robus
   <img src="Figure/framework.png" width="95%">
 </p>
 
-<p align="center">
 Overview of SemMark. The watermark signal is generated from the semantic signature of the previous sentence through locality-sensitive hashing (LSH), and injected into high-entropy decoding positions via entropy-aware logit modulation.
-</p>
+
 ## Main Results
 
 <p align="center">
   <img src="Figure/main_results.png" width="95%">
 </p>
 
-<p align="center">
 Performance comparison against SWEET, SemStamp, and K-SemStamp across RealNews, Reddit-TIFU, and BookSum datasets under multiple adversarial attacks.
-</p>
 
 ## Environment Setup
 
