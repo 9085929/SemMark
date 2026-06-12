@@ -2,54 +2,44 @@ import argparse
 from tqdm import tqdm
 import torch
 import os
-import time  # 👈 新增
+import time  
 from nltk.tokenize import sent_tokenize
 from datasets import load_from_disk, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, LogitsProcessorList, LogitsProcessor
 
-# 🌟 新增：白盒化实现纯正的 KGW (h=1) + SWEET 机制
 class KGW_SWEET_LogitsWarper(LogitsProcessor):
     def __init__(self, vocab_size, fraction=0.5, strength=2.0, hash_key=15485863, entropy_threshold=0.6):
         self.vocab_size = vocab_size
-        self.fraction = fraction       # 绿名单比例 (Gamma)
-        self.strength = strength       # 水印强度 (Delta)
+        self.fraction = fraction       # 绿名单比例 
+        self.strength = strength       # 水印强度
         self.hash_key = hash_key       # 哈希密钥
-        self.entropy_threshold = entropy_threshold # SWEET 熵阈值 (Tau)
+        self.entropy_threshold = entropy_threshold 
 
     def __call__(self, input_ids, scores):
-        # 1. 计算当前时刻模型输出 logits 的信息熵 (Text Entropy)
         probs = torch.softmax(scores, dim=-1)
-        # 加 1e-10 防止 log(0) 出现 NaN
         entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1) 
         
         watermarked_scores = scores.clone()
         
-        # 2. 对 Batch 中的每一条数据独立进行 KGW 绿名单生成和 SWEET 过滤
         for b_idx in range(input_ids.shape[0]):
             
-            # 🚨 SWEET 核心：如果当前熵低于阈值 (低熵)，直接跳过水印注入，保持原生 scores！
             if entropy[b_idx] < self.entropy_threshold:
                 continue
                 
-            # 🚨 KGW 核心：获取前一个 Token (h=1) 作为伪随机数生成器的种子
             if input_ids.shape[1] > 0:
                 prev_token = input_ids[b_idx, -1].item()
             else:
                 prev_token = 0
                 
-            # 生成随前文动态变化的随机种子 (Dynamic Seed)
             seed = (self.hash_key * prev_token) % (2**31 - 1)
             
-            # 使用该种子初始化 GPU 上的随机数生成器
             rng = torch.Generator(device=scores.device)
             rng.manual_seed(seed)
             
-            # 打乱词表，截取前 fraction 比例的词构成绿名单 (Greenlist)
             greenlist_size = int(self.vocab_size * self.fraction)
             vocab_permutation = torch.randperm(self.vocab_size, generator=rng, device=scores.device)
             greenlist_ids = vocab_permutation[:greenlist_size]
             
-            # 将 Delta (strength) 加到绿名单词汇的 logits 上
             watermarked_scores[b_idx, greenlist_ids] += self.strength
             
         return watermarked_scores
@@ -83,7 +73,6 @@ def main(args):
     )
     model.eval()
 
-    # 实例化我们自己手写的 KGW + SWEET 处理器
     kgw_sweet_warper = KGW_SWEET_LogitsWarper(
         vocab_size=len(tokenizer),
         fraction=args.fraction,
@@ -92,7 +81,6 @@ def main(args):
         entropy_threshold=args.sweet_threshold
     )
 
-    # 放入模型的生成流水线
     watermark_processor = LogitsProcessorList([kgw_sweet_warper])
 
     print(f"Loading dataset from {args.dataset_path}...")
@@ -132,14 +120,12 @@ def main(args):
         num_sents = len(generated_sents)
         actual_num_tokens = len(tokenizer.encode(gen_text_clean, add_special_tokens=False))
         
-        # 👇 4. 存入与 sampling.py 格式完全一致的各项指标
         item['elapsed_time'] = elapsed_time
         item['num_sents'] = num_sents
         item['num_tokens'] = actual_num_tokens
         item['sec_per_sent'] = elapsed_time / num_sents if num_sents > 0 else 0
         item['tokens_per_sec'] = actual_num_tokens / elapsed_time if elapsed_time > 0 else 0
 
-        # 拼装回完整的文本形式
         item['text'] = prefix + " " + gen_text
         item['is_watermarked'] = True
         new_data.append(item)
