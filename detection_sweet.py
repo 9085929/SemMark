@@ -55,7 +55,7 @@ if __name__ == '__main__':
     human_texts = load_from_disk(args.human_text)['text']
     z_scores, para_scores, human_scores = [], [], []
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    print("🧠 正在加载大语言模型用于 SWEET 熵值计算 (这可能需要一点时间)...")
+    print("正在加载大语言模型用于 SWEET 熵值计算 ...")
     llm_model = AutoModelForCausalLM.from_pretrained(args.model, device_map="auto", torch_dtype=torch.float16)
     
     # ksemstamp detection
@@ -87,7 +87,6 @@ if __name__ == '__main__':
                 lmbd=args.lmbd, lsh_dim=args.sp_dim, tokenizer=tokenizer, llm_model=llm_model, 
                 sweet_threshold=args.sweet_threshold 
             )
-            # 不是 None 才加进去
             if z_score is not None:
                 z_scores.append(z_score)
             
@@ -104,21 +103,15 @@ if __name__ == '__main__':
                     para_scores.append(para_z_score)
 
         for i in trange(0, len(human_texts), 1):
-            # 👇 1. 先安全地把数据转成长字符串（兼容 List 格式）
             raw_human = human_texts[i]
             raw_human_str = " ".join(raw_human) if isinstance(raw_human, list) else str(raw_human)
-            
-            # 👇 2. 截取前 500 个单词
             truncated_human_text = " ".join(raw_human_str.split()[:500]) 
-            
-            # 👇 3. 进行分句和检测
             sents = sent_tokenize(truncated_human_text)
             z_score = detect_lsh_sweet(
                 raw_text=truncated_human_text, lsh_model=lsh_model, 
                 lmbd=args.lmbd, lsh_dim=args.sp_dim, tokenizer=tokenizer, llm_model=llm_model, 
                 sweet_threshold=args.sweet_threshold 
             )
-            # 不是 None 才加进去
             if z_score is not None:
                 human_scores.append(z_score)
     elif args.detection_mode == 'kgw':
@@ -168,14 +161,10 @@ if __name__ == '__main__':
     # 1. 计算 FPR=1% 时的具体 Z-score 阈值
     threshold_1_percent = np.percentile(human_scores, 99)
     print(f"当前 TPR@1% 对应的 Z-score 及格线约为: {threshold_1_percent:.4f}")
-
-    # 2. 找出所有未过线的生成文本的索引
     failed_indices = [i for i, z in enumerate(z_scores) if z < threshold_1_percent]
 
     print(f"共有 {len(failed_indices)}/{len(z_scores)} 个生成样本未能通过 1% 阈值检测。")
     print("正在打印 Z-score 垫底的前 20 个样本进行人工诊断：")
-
-    # 3. 按分数从低到高排序，打印最差的那些
     failed_indices_sorted = sorted(failed_indices, key=lambda i: z_scores[i])
 
     for rank, idx in enumerate(failed_indices_sorted[:20]):
@@ -225,9 +214,9 @@ if __name__ == '__main__':
     
     # --- 3. 打印两个结果 ---
     print("="*80)
-    print(f"✅【SWEET 未受攻击 (原文本) 指标】 AUC: {pure_auroc:.3f} | TPR@1%: {pure_tpr1:.3f} | TPR@5%: {pure_tpr5:.3f}")
+    print(f"✅【SWEET 未受攻击指标】 AUC: {pure_auroc:.3f} | TPR@1%: {pure_tpr1:.3f} | TPR@5%: {pure_tpr5:.3f}")
     if len(para_scores) > 0:
-        print(f"🚨【SWEET 重述攻击后指标】   AUC: {attack_auroc:.3f} | TPR@1%: {attack_tpr1:.3f} | TPR@5%: {attack_tpr5:.3f}")
+        print(f"🚨【SWEET 攻击后指标】   AUC: {attack_auroc:.3f} | TPR@1%: {attack_tpr1:.3f} | TPR@5%: {attack_tpr5:.3f}")
     print("="*80)
     auroc, fpr1, fpr5 = attack_auroc, attack_tpr1, attack_tpr5
     bert_score = 0.0 
