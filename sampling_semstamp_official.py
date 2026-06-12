@@ -8,7 +8,6 @@ from transformers.tokenization_utils import PreTrainedTokenizer
 import numpy as np
 from samplingg_utils import SentenceEndCriteria, device, gen_sent
 
-# rng = torch.Generator()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 rng = torch.Generator(device)
 MAX_TRIALS = sampling_utils.MAX_TRIALS
@@ -41,10 +40,8 @@ def reject_close_generation(lsh_model, sents, margin, cutoff=None):
     if cutoff != None:
         normals = normals[:cutoff]
 
-    # sims[i, j] is the cosine similarity between the ith generation and the jth normal vec
     sims = cosine_distance_matrix(embeds, normals)
     sims_abs = torch.abs(sims)
-    # max_sim is the highest cosine similarity of each generation with any normal vec
     min_sims = sims_abs.min(dim=1).values
     select = []
     for i in range(len(min_sims)):
@@ -62,7 +59,6 @@ def semstamp_official_completion(
         model: PreTrainedModel, 
         tokenizer: PreTrainedTokenizer, gen_config: GenerationConfig,  # gen args
         lsh_model: SBERTLSHModel, lsh_dim: int,  # LSH args
-        # watermark args. lambda is probability of accepting (i.e., green list size)
         lmbd=1.0,
         device='cuda',
         margin=0.002,
