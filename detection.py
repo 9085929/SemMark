@@ -12,7 +12,6 @@ from nltk.tokenize import sent_tokenize
 import os
 import torch
 import numpy as np
-#from detection_utils import detect_lsh, flatten_gens_and_paras, detect_semstamp_official
 from detection_utils import detect_lsh, flatten_gens_and_paras, detect_semstamp_official, detect_kmeans
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -59,27 +58,23 @@ if __name__ == '__main__':
         embedder = SentenceTransformer(args.embedder)
         
         for i in trange(0, len(gens), 1, desc='kmeans_detection'):
-            # 🌟 这里多加一个 tokenizer=tokenizer
             z_score = detect_kmeans(raw_text=gens[i], embedder=embedder, lmbd=args.lmbd,
                                     k_dim=args.sp_dim, cluster_centers=cluster_centers, tokenizer=tokenizer)
             if z_score is not None:
                 z_scores.append(z_score)
             
             if paras != None:
-                # 🌟 这里多加一个 tokenizer=tokenizer
                 para_z_score = detect_kmeans(raw_text=paras[i], embedder=embedder, lmbd=args.lmbd,
                                         k_dim=args.sp_dim, cluster_centers=cluster_centers, tokenizer=tokenizer)
                 if para_z_score is not None:
                     para_scores.append(para_z_score)
 
         for i in trange(0, len(human_texts), 1, desc='kmeans_human'):
-            # 🌟 这里多加一个 tokenizer=tokenizer
             z_score = detect_kmeans(raw_text=human_texts[i], embedder=embedder, lmbd=args.lmbd,
                                     k_dim=args.sp_dim, cluster_centers=cluster_centers, tokenizer=tokenizer)
             if z_score is not None:
                 human_scores.append(z_score)
             
-    # semstamp detection
     elif args.detection_mode == 'lsh':
         lsh_model_class = SBERTLSHModel
         lsh_model = lsh_model_class(
@@ -91,7 +86,6 @@ if __name__ == '__main__':
                 raw_text=gens[i], lsh_model=lsh_model,  
                 lmbd=args.lmbd, lsh_dim=args.sp_dim, tokenizer=tokenizer
             )
-            # 不是 None 才加进去
             if z_score is not None:
                 z_scores.append(z_score)
             
@@ -102,7 +96,6 @@ if __name__ == '__main__':
                 raw_text=paras[i], lsh_model=lsh_model, # 直接传 paras[i]
                 lmbd=args.lmbd, lsh_dim=args.sp_dim, tokenizer=tokenizer
             )
-                # 同样加上安全气囊，防止脏数据导致报错
                 if para_z_score is not None:
                     para_scores.append(para_z_score)
 
@@ -112,10 +105,8 @@ if __name__ == '__main__':
                 raw_text=human_texts[i], lsh_model=lsh_model, # 直接传 human_texts[i]
                 lmbd=args.lmbd, lsh_dim=args.sp_dim, tokenizer=tokenizer
             )
-            # 不是 None 才加进去
             if z_score is not None:
                 human_scores.append(z_score)
-    #  SemStamp 官方检测通道
     elif args.detection_mode == 'semstamp':
         lsh_model_class = SBERTLSHModel
         lsh_model = lsh_model_class(
@@ -137,12 +128,11 @@ if __name__ == '__main__':
                 human_scores.append(z_score)
 
     z_score_name = os.path.join(args.dataset_path, "z_scores.npy")
-    # 解除保存封印
     para_score_name = os.path.join(args.dataset_path, "para_z_scores.npy") 
     human_score_name = os.path.join(args.dataset_path, "human_z_scores.npy")
 
     np.save(z_score_name, z_scores)
-    np.save(para_score_name, para_scores) # 解除保存封印
+    np.save(para_score_name, para_scores) 
     np.save(human_score_name, human_scores)
 
     results_path = os.path.join(args.dataset_path, "results.csv")
@@ -175,9 +165,9 @@ if __name__ == '__main__':
     
     # --- 3. 打印两个结果 ---
     print("="*80)
-    print(f"✅【标准 LSH 未受攻击指标】 AUC: {pure_auroc:.3f} | TPR@1%: {pure_tpr1:.3f} | TPR@5%: {pure_tpr5:.3f}")
+    print(f"✅【未受攻击指标】 AUC: {pure_auroc:.3f} | TPR@1%: {pure_tpr1:.3f} | TPR@5%: {pure_tpr5:.3f}")
     if len(para_scores) > 0:
-        print(f"🚨【标准 LSH 重述攻击后指标】 AUC: {attack_auroc:.3f} | TPR@1%: {attack_tpr1:.3f} | TPR@5%: {attack_tpr5:.3f}")
+        print(f"🚨【攻击后指标】 AUC: {attack_auroc:.3f} | TPR@1%: {attack_tpr1:.3f} | TPR@5%: {attack_tpr5:.3f}")
     print("="*80)
     
     metrics = [f"{pure_auroc:.3f}", f"{pure_tpr1:.3f}", f"{pure_tpr5:.3f}", "0.000"]
