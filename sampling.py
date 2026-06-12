@@ -58,7 +58,7 @@ def parse_args():
         help='Repetition penalty.'
     )
     parser.add_argument(
-        '--lmbd', type=float, default=0.25,
+        '--lmbd', type=float, default=0.5,
         help='Ratio of valid sentences.'
     )
     parser.add_argument(
