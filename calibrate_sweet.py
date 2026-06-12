@@ -1,4 +1,3 @@
-# 🚨 终极安全免检补丁（必须放在最前面）
 import transformers.utils.import_utils
 transformers.utils.import_utils.check_torch_load_is_safe = lambda: None
 
@@ -9,16 +8,14 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-# ==================== 🛠️ 核心配置 ====================
-DATA_PATH = "dataset/benchmark_datasets/realnews_10k-8000-pegasus-merged" # 你的原始数据集
+DATA_PATH = "dataset/benchmark_datasets/realnews_10k-8000-pegasus-merged" # 原始数据集
 MODEL_PATH = "/home/haojifei/dev_resource/huggingface/models/Qwen/Qwen3-8B"
-SKIP_LINES = 0       # 跳过前 8000 条已使用的数据
-NUM_SAMPLES = 4000       # 跑 2000 条验证集数据
+SKIP_LINES = 8000       # 跳过前 8000 条已使用的数据
+NUM_SAMPLES = 2000       # 跑 2000 条验证集数据
 GAMMA = 0.5             # 绿名单比例 
 DELTA = 2.0             # 加水印时的偏置参数 
-MC_ITER = 30            # 蒙特卡洛模拟次数 (用于高效估算 P_G，30次可保证高精度)
+MC_ITER = 30            # 蒙特卡洛模拟次数 
 MAX_LENGTH = 512        # 单条文本最大长度
-# ======================================================
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -28,19 +25,13 @@ def main():
     model = AutoModelForCausalLM.from_pretrained(MODEL_PATH, device_map="auto", torch_dtype=torch.float16)
     model.eval()
 
-    # ✅ 替换为针对 HuggingFace Dataset 的读取代码
-    from datasets import load_from_disk
-    
-    # 记得将顶部的 DATA_PATH 修改为你的新路径：
-    # DATA_PATH = "dataset/benchmark_datasets/booksum_10k_ready-8000-pegasus-merged"
-    
+    from datasets import load_from_disk 
     print(f"📖 正在从 HuggingFace 磁盘缓存读取数据: {DATA_PATH} ...")
     texts = []
     
     # 加载 DatasetDict
     full_dataset = load_from_disk(DATA_PATH)
     
-    # 默认使用 test 划分进行校准（你也可以换成 train 或 valid）
     split_to_use = 'train' if 'train' in full_dataset else list(full_dataset.keys())[0]
     ds = full_dataset[split_to_use]
     
@@ -53,7 +44,6 @@ def main():
             break
             
         try:
-            # 采用与你 sampling.py 中完全对齐的文本提取逻辑
             raw_text = " ".join(item['text']) if isinstance(item['text'], list) else item['text']
             
             if raw_text.strip():
@@ -69,13 +59,11 @@ def main():
         tokens = tokenizer(text, return_tensors="pt", truncation=True, max_length=MAX_LENGTH).to(device)
         input_ids = tokens.input_ids
         
-        # 如果句子太短，跳过
         if input_ids.shape[1] < 2:
             continue
             
         with torch.no_grad():
             outputs = model(input_ids)
-            # 语言模型的原理：logits[:-1] 预测 input_ids[1:]
             logits = outputs.logits[0, :-1, :] 
             seq_len, vocab_size = logits.shape
             
