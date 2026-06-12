@@ -47,25 +47,16 @@ conda activate semmark
 pip install -r requirements.txt
 ```
 
----
 
-## Required Models
+## Model Download
 
-Before running the pipeline, download:
+The models used in our experiments are available at the following links:
 
-### Generation Model
+* **Generation Model:** [Qwen3-8B][qwen3-8b]
+* **Embedding Model:** [Qwen3-Embedding-0.6B][qwen3-embedding]
 
-```text
-Qwen/Qwen3-8B
-```
-
-### Embedding Model
-
-```text
-Qwen/Qwen3-Embedding-0.6B
-```
-
-The scripts will automatically load these models from HuggingFace if available.
+[qwen3-8b]: https://huggingface.co/Qwen/Qwen3-8B
+[qwen3-embedding]: https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
 
 ---
 
