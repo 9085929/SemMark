@@ -1,9 +1,5 @@
 # SemMark: Robust Large Language Model Watermarking via Semantic Chain-Binding
 
-Official implementation of the paper:
-
-**SemMark: Robust Large Language Model Watermarking via Semantic Chain-Binding**
-
 ## Overview
 
 SemMark is a semantic-level watermarking framework designed for Large Language Models (LLMs).
