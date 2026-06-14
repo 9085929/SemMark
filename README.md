@@ -30,12 +30,18 @@ Performance comparison against SWEET, SemStamp, and K-SemStamp across RealNews, 
 
 ## Environment Setup
 
-Create a Python environment:
+Clone the repository:
+
+```bash
+git clone https://github.com/9085929/SemMark.git
+cd SemMark
+```
+
+Create the Python environment:
 
 ```bash
 conda create -n semmark python=3.10
 conda activate semmark
-
 pip install -r requirements.txt
 ```
 
